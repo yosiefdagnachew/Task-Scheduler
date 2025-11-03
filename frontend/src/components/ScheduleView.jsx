@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Download, ArrowLeft, Calendar as CalendarIcon } from 'lucide-react';
-import { getSchedule, exportScheduleCSV } from '../services/api';
+import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, updateAssignment, getTeamMembers } from '../services/api';
 import { format, eachDayOfInterval, parseISO } from 'date-fns';
 
 const TASK_COLORS = {
@@ -24,9 +24,11 @@ export default function ScheduleView() {
   const [schedule, setSchedule] = useState(null);
   const [loading, setLoading] = useState(true);
   const [groupedAssignments, setGroupedAssignments] = useState({});
+  const [team, setTeam] = useState([]);
 
   useEffect(() => {
     loadSchedule();
+    getTeamMembers().then(res => setTeam(res.data));
   }, [id]);
 
   const loadSchedule = async () => {
@@ -70,6 +72,29 @@ export default function ScheduleView() {
     }
   };
 
+  const handleExportExcel = async () => {
+    try {
+      await exportScheduleExcel(id);
+      alert('Excel export not implemented in API');
+    } catch (e) { alert(e.response?.data?.detail || 'Failed'); }
+  };
+  const handleExportPDF = async () => {
+    try {
+      await exportSchedulePDF(id);
+      alert('PDF export not implemented in API');
+    } catch (e) { alert(e.response?.data?.detail || 'Failed'); }
+  };
+
+  const reassign = async (assignmentId, memberId) => {
+    if (!memberId) return;
+    try {
+      await updateAssignment(assignmentId, memberId);
+      await loadSchedule();
+    } catch (e) {
+      alert('Failed to update assignment');
+    }
+  };
+
   if (loading) {
     return <div className="text-center py-12">Loading schedule...</div>;
   }
@@ -99,13 +124,17 @@ export default function ScheduleView() {
             {format(parseISO(schedule.start_date), 'MMM dd')} - {format(parseISO(schedule.end_date), 'MMM dd, yyyy')}
           </p>
         </div>
-        <button
-          onClick={handleExport}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-        >
-          <Download className="w-4 h-4 mr-2" />
-          Export CSV
-        </button>
+        <div className="space-x-2">
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            CSV
+          </button>
+          <button onClick={handleExportExcel} className="px-3 py-2 border border-gray-300 rounded-md">Excel</button>
+          <button onClick={handleExportPDF} className="px-3 py-2 border border-gray-300 rounded-md">PDF</button>
+        </div>
       </div>
 
       <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -147,36 +176,60 @@ export default function ScheduleView() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {atmMorning ? (
-                        <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.ATM_MORNING}`}>
-                          {atmMorning.member_name}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.ATM_MORNING}`}>
+                            {atmMorning.member_name}
+                          </span>
+                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(atmMorning.id, e.target.value)}>
+                            <option value="">Change</option>
+                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                          </select>
+                        </div>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {atmMidnight ? (
-                        <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.ATM_MIDNIGHT}`}>
-                          {atmMidnight.member_name}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.ATM_MIDNIGHT}`}>
+                            {atmMidnight.member_name}
+                          </span>
+                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(atmMidnight.id, e.target.value)}>
+                            <option value="">Change</option>
+                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                          </select>
+                        </div>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {sysaidMaker ? (
-                        <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.SYSAID_MAKER}`}>
-                          {sysaidMaker.member_name}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.SYSAID_MAKER}`}>
+                            {sysaidMaker.member_name}
+                          </span>
+                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(sysaidMaker.id, e.target.value)}>
+                            <option value="">Change</option>
+                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                          </select>
+                        </div>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {sysaidChecker ? (
-                        <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.SYSAID_CHECKER}`}>
-                          {sysaidChecker.member_name}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.SYSAID_CHECKER}`}>
+                            {sysaidChecker.member_name}
+                          </span>
+                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(sysaidChecker.id, e.target.value)}>
+                            <option value="">Change</option>
+                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                          </select>
+                        </div>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
@@ -189,7 +242,7 @@ export default function ScheduleView() {
         </div>
       </div>
 
-      {/* Assignment Summary */}
+      {/* Assignment Summary & Fairness */}
       <div className="mt-6 bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Assignment Summary</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -207,7 +260,32 @@ export default function ScheduleView() {
             );
           })}
         </div>
+        <div className="mt-6">
+          <h4 className="font-medium mb-2">Fairness Score (variance and spread)</h4>
+          <FairnessDetails assignments={schedule.assignments} />
+        </div>
       </div>
+    </div>
+  );
+}
+
+function FairnessDetails({ assignments }) {
+  // Compute per-member counts
+  const counts = {};
+  assignments.forEach(a => {
+    counts[a.member_name] = (counts[a.member_name] || 0) + 1;
+  });
+  const values = Object.values(counts);
+  if (values.length === 0) return <div className="text-sm text-gray-500">No data</div>;
+  const avg = values.reduce((a,b)=>a+b,0) / values.length;
+  const variance = values.reduce((acc, v)=> acc + Math.pow(v - avg, 2), 0) / values.length;
+  const spread = Math.max(...values) - Math.min(...values);
+  return (
+    <div className="text-sm text-gray-700">
+      <div>Members: {values.length}</div>
+      <div>Average assignments: {avg.toFixed(2)}</div>
+      <div>Variance: {variance.toFixed(2)}</div>
+      <div>Max - Min: {spread}</div>
     </div>
   );
 }
