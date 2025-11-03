@@ -60,18 +60,18 @@ export default function ScheduleGenerator() {
   }, []);
 
   return (
-    <div className="px-4 py-6">
+    <div className="px-4 py-6 animate-fade-in">
       <div className="max-w-2xl mx-auto">
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Generate Schedule</h2>
-          <p className="mt-1 text-sm text-gray-500">Create a new schedule for the specified date range</p>
+        <div className="mb-8 animate-slide-up">
+          <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">Generate Schedule</h2>
+          <p className="mt-2 text-sm text-gray-600">Create a new schedule for the specified date range</p>
         </div>
 
-        <div className="bg-white shadow rounded-lg p-6">
+        <div className="card p-6 animate-slide-up">
           <form onSubmit={handleSubmit}>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 mb-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Start Date
                 </label>
                 <input
@@ -79,11 +79,11 @@ export default function ScheduleGenerator() {
                   required
                   value={formData.start_date}
                   onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="input-field"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
                   End Date
                 </label>
                 <input
@@ -91,7 +91,7 @@ export default function ScheduleGenerator() {
                   required
                   value={formData.end_date}
                   onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="input-field"
                 />
               </div>
               <div>
@@ -150,16 +150,19 @@ export default function ScheduleGenerator() {
             </div>
 
             {error && (
-              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-                {error}
+              <div className="mb-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-lg animate-fade-in">
+                <div className="flex items-center">
+                  <span className="text-red-600 mr-2">⚠️</span>
+                  {error}
+                </div>
               </div>
             )}
 
-            <div className="flex justify-end space-x-3">
+            <div className="flex justify-end space-x-3 pt-4">
               <button
                 type="button"
                 onClick={() => navigate('/')}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                className="btn-secondary"
                 disabled={loading}
               >
                 Cancel
@@ -167,7 +170,7 @@ export default function ScheduleGenerator() {
               <button
                 type="submit"
                 disabled={loading}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                className="btn-primary inline-flex items-center disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
               >
                 {loading ? (
                   <>
@@ -185,13 +188,28 @@ export default function ScheduleGenerator() {
           </form>
         </div>
 
-        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-sm font-medium text-blue-900 mb-2">Scheduling Rules</h3>
-          <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li>ATM monitoring: Two people per day (Morning and Mid-day/Night)</li>
-            <li>B-shift assignees get the next day off (rest rule)</li>
-            <li>SysAid: Weekly Maker/Checker pair (must be in office all week)</li>
-            <li>Fairness: Equal distribution over rolling 90-day window</li>
+        <div className="mt-6 bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-6 shadow-md">
+          <h3 className="text-base font-bold text-blue-900 mb-3 flex items-center">
+            <span className="mr-2">📋</span>
+            Scheduling Rules
+          </h3>
+          <ul className="text-sm text-blue-800 space-y-2">
+            <li className="flex items-start">
+              <span className="mr-2">•</span>
+              <span>ATM monitoring: Two people per day (Morning and Mid-day/Night)</span>
+            </li>
+            <li className="flex items-start">
+              <span className="mr-2">•</span>
+              <span>B-shift assignees get the next day off (rest rule)</span>
+            </li>
+            <li className="flex items-start">
+              <span className="mr-2">•</span>
+              <span>SysAid: Weekly Maker/Checker pair (must be in office all week)</span>
+            </li>
+            <li className="flex items-start">
+              <span className="mr-2">•</span>
+              <span>Fairness: Equal distribution over rolling 90-day window</span>
+            </li>
           </ul>
         </div>
       </div>

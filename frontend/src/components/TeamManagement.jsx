@@ -114,11 +114,11 @@ export default function TeamManagement() {
   }
 
   return (
-    <div className="px-4 py-6">
-      <div className="mb-6 flex justify-between items-center">
+    <div className="px-4 py-6 animate-fade-in">
+      <div className="mb-8 flex justify-between items-center animate-slide-up">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Team Management</h2>
-          <p className="mt-1 text-sm text-gray-500">Manage team members and their availability</p>
+          <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">Team Management</h2>
+          <p className="mt-2 text-sm text-gray-600">Manage team members and their availability</p>
         </div>
         <button
           onClick={() => {
@@ -126,7 +126,7 @@ export default function TeamManagement() {
             setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4] });
             setShowModal(true);
           }}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+          className="btn-primary inline-flex items-center"
         >
           <Plus className="w-4 h-4 mr-2" />
           Add Member
@@ -134,35 +134,42 @@ export default function TeamManagement() {
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {members.map((member) => (
-          <div key={member.id} className="bg-white shadow rounded-lg p-6">
+        {members.map((member, idx) => (
+          <div key={member.id} className="card p-6 animate-slide-up hover:scale-[1.02] transition-transform duration-300" style={{ animationDelay: `${idx * 0.1}s` }}>
             <div className="flex justify-between items-start">
               <div className="flex-1">
-                <h3 className="text-lg font-medium text-gray-900">{member.name}</h3>
-                <p className="text-sm text-gray-500 mt-1">ID: {member.id}</p>
-                <div className="mt-3">
-                  <p className="text-sm font-medium text-gray-700">Office Days:</p>
-                  <div className="flex flex-wrap gap-2 mt-1">
+                <div className="flex items-center mb-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg mr-3 shadow-md">
+                    {member.name.charAt(0)}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">{member.name}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">ID: {member.id}</p>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Office Days:</p>
+                  <div className="flex flex-wrap gap-2">
                     {member.office_days.map(day => (
-                      <span key={day} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                      <span key={day} className="badge bg-blue-100 text-blue-800 border border-blue-200">
                         {WEEKDAYS[day]}
                       </span>
                     ))}
                   </div>
                 </div>
                 {member.unavailable_periods.length > 0 && (
-                  <div className="mt-3">
-                    <p className="text-sm font-medium text-gray-700">Unavailable Periods:</p>
-                    <div className="mt-1 space-y-1">
+                  <div className="mt-4">
+                    <p className="text-sm font-semibold text-gray-700 mb-2">Unavailable Periods:</p>
+                    <div className="space-y-2">
                       {member.unavailable_periods.map(period => (
-                        <div key={period.id} className="flex items-center justify-between text-sm bg-red-50 p-2 rounded">
-                          <span>
+                        <div key={period.id} className="flex items-center justify-between text-sm bg-red-50 border border-red-200 p-3 rounded-lg">
+                          <span className="text-red-800">
                             {format(new Date(period.start_date), 'MMM dd')} - {format(new Date(period.end_date), 'MMM dd, yyyy')}
-                            {period.reason && ` (${period.reason})`}
+                            {period.reason && <span className="text-red-600"> ({period.reason})</span>}
                           </span>
                           <button
                             onClick={() => handleDeleteUnavailable(period.id)}
-                            className="text-red-600 hover:text-red-800"
+                            className="text-red-600 hover:text-red-800 hover:bg-red-100 p-1 rounded transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -183,7 +190,8 @@ export default function TeamManagement() {
                     });
                     setShowModal(true);
                   }}
-                  className="p-2 text-gray-600 hover:text-gray-900"
+                  className="p-2 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-all duration-200"
+                  title="Edit"
                 >
                   <Edit className="w-5 h-5" />
                 </button>
@@ -193,13 +201,15 @@ export default function TeamManagement() {
                     setUnavailableForm({ start_date: '', end_date: '', reason: '' });
                     setShowUnavailableModal(true);
                   }}
-                  className="p-2 text-gray-600 hover:text-gray-900"
+                  className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all duration-200"
+                  title="Add Unavailable Period"
                 >
                   <CalendarIcon className="w-5 h-5" />
                 </button>
                 <button
                   onClick={() => handleDelete(member.id)}
-                  className="p-2 text-red-600 hover:text-red-800"
+                  className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-200"
+                  title="Delete"
                 >
                   <Trash2 className="w-5 h-5" />
                 </button>
@@ -211,61 +221,63 @@ export default function TeamManagement() {
 
       {/* Member Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <h3 className="text-lg font-bold mb-4">{selectedMember ? 'Edit' : 'Add'} Team Member</h3>
-            <form onSubmit={handleSubmit}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+          <div className="relative card w-full max-w-md p-6 animate-slide-up">
+            <h3 className="text-xl font-bold mb-6 text-gray-900">{selectedMember ? 'Edit' : 'Add'} Team Member</h3>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Name</label>
                 <input
                   type="text"
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  className="input-field"
+                  placeholder="Enter member name"
                 />
               </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">ID</label>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">ID</label>
                 <input
                   type="text"
                   required
                   disabled={!!selectedMember}
                   value={formData.id}
                   onChange={(e) => setFormData({ ...formData, id: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md disabled:bg-gray-100"
+                  className="input-field disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  placeholder="member_id"
                 />
               </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Office Days</label>
-                <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-3">Office Days</label>
+                <div className="grid grid-cols-2 gap-3">
                   {WEEKDAYS.map((day, index) => (
-                    <label key={index} className="flex items-center">
+                    <label key={index} className="flex items-center p-3 border-2 rounded-lg cursor-pointer hover:bg-indigo-50 hover:border-indigo-300 transition-all duration-200" style={{ borderColor: formData.office_days.includes(index) ? '#6366f1' : '#e5e7eb' }}>
                       <input
                         type="checkbox"
                         checked={formData.office_days.includes(index)}
                         onChange={() => toggleOfficeDay(index)}
-                        className="mr-2"
+                        className="mr-3 w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
                       />
-                      <span className="text-sm">{day}</span>
+                      <span className="text-sm font-medium text-gray-700">{day}</span>
                     </label>
                   ))}
                 </div>
               </div>
-              <div className="flex justify-end space-x-3">
+              <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
                   onClick={() => {
                     setShowModal(false);
                     setSelectedMember(null);
                   }}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  className="btn-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                  className="btn-primary"
                 >
                   {selectedMember ? 'Update' : 'Create'}
                 </button>

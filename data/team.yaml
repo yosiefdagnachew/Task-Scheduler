@@ -7,84 +7,83 @@
 #   - unavailable_ranges: List of date ranges (start/end inclusive)
 
 members:
-  - name: "Abebe Kebede"
-    id: "abebe_k"
-    office_days: [0, 1, 2, 3, 4]  # Mon-Fri
+  - name: "Yosief Dagnachew"
+    id: "ZB/ISS/101"
+    office_days: [0, 1, 2, 3, 4] # Mon-Fri
     unavailable_dates: []
     unavailable_ranges: []
-  
-  - name: "Birhanu Tesfaye"
-    id: "birhanu_t"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Chaltu Alemayehu"
-    id: "chaltu_a"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Dawit Mengistu"
-    id: "dawit_m"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Eleni Bekele"
-    id: "eleni_b"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Fitsum Hailu"
-    id: "fitsum_h"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Genet Tadesse"
-    id: "genet_t"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Hirut Assefa"
-    id: "hirut_a"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Ibrahim Mohammed"
-    id: "ibrahim_m"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Jemila Ahmed"
-    id: "jemila_a"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Kebede Worku"
-    id: "kebede_w"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Liya Yohannes"
-    id: "liya_y"
-    office_days: [0, 1, 2, 3, 4]
-    unavailable_dates: []
-    unavailable_ranges: []
-  
-  - name: "Mulugeta Demissie"
-    id: "mulugeta_d"
+
+  - name: "Temesegen Abate"
+    id: "ZB/ISS/102"
     office_days: [0, 1, 2, 3, 4]
     unavailable_dates: []
     unavailable_ranges: []
 
+  - name: "Hailemariyam Biyadglign"
+    id: "ZB/ISS/103"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Welday Hailu"
+    id: "ZB/ISS/104"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Azeb Mehrete"
+    id: "ZB/ISS/105"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Bereket Fikadu"
+    id: "ZB/ISS/106"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Emebet Andualem"
+    id: "ZB/ISS/107"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Fikade Addisie"
+    id: "ZB/ISS/108"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Elias Abebe"
+    id: "ZB/ISS/109"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Yohannes Esubalew"
+    id: "ZB/ISS/110"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Bethlehem Yehualaeshet"
+    id: "ZB/ISS/111"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Tobel Mikiyas "
+    id: "ZB/ISS/112"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+  - name: "Negasi Yenehun"
+    id: "ZB/ISS/113"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
 # Example of unavailable dates/ranges:
 #   unavailable_dates:
 #     - "2025-11-15"

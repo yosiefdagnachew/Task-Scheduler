@@ -1,6 +1,6 @@
 pyyaml>=6.0
 pytz>=2023.3
-ics>=0.8.0
+ics>=0.7.2
 python-dateutil>=2.8.2
 click>=8.1.0
 fastapi>=0.104.0

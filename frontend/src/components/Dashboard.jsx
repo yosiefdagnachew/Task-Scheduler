@@ -33,117 +33,128 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="px-4 py-6">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
-        <p className="mt-1 text-sm text-gray-500">Manage your task scheduling system</p>
+    <div className="px-4 py-6 animate-fade-in">
+      <div className="mb-8 animate-slide-up">
+        <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">Dashboard</h2>
+        <p className="mt-2 text-sm text-gray-600">Manage your task scheduling system</p>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-3 mb-6">
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-3 mb-8">
+        <div className="card overflow-hidden group hover:scale-105 transition-transform duration-300">
+          <div className="p-6 bg-gradient-to-br from-blue-50 to-indigo-50">
+            <div className="flex items-center justify-between">
               <div className="flex-shrink-0">
-                <Calendar className="h-6 w-6 text-gray-400" />
+                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                  <Calendar className="h-6 w-6 text-white" />
+                </div>
               </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Schedules</dt>
-                  <dd className="text-lg font-medium text-gray-900">{schedules.length}</dd>
-                </dl>
+              <div className="ml-4 flex-1">
+                <dt className="text-sm font-medium text-gray-600 truncate">Schedules</dt>
+                <dd className="text-3xl font-bold text-gray-900 mt-1">{schedules.length}</dd>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
+        <div className="card overflow-hidden group hover:scale-105 transition-transform duration-300">
+          <div className="p-6 bg-gradient-to-br from-purple-50 to-pink-50">
+            <div className="flex items-center justify-between">
               <div className="flex-shrink-0">
-                <Users className="h-6 w-6 text-gray-400" />
+                <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center shadow-md">
+                  <Users className="h-6 w-6 text-white" />
+                </div>
               </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Team Members</dt>
-                  <dd className="text-lg font-medium text-gray-900">{teamCount}</dd>
-                </dl>
+              <div className="ml-4 flex-1">
+                <dt className="text-sm font-medium text-gray-600 truncate">Team Members</dt>
+                <dd className="text-3xl font-bold text-gray-900 mt-1">{teamCount}</dd>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
+        <div className="card overflow-hidden group hover:scale-105 transition-transform duration-300">
+          <div className="p-6 bg-gradient-to-br from-green-50 to-emerald-50">
             <Link
               to="/schedule/generate"
-              className="flex items-center justify-center w-full px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+              className="flex flex-col items-center justify-center h-full min-h-[80px] btn-primary"
             >
-              <Plus className="w-4 h-4 mr-2" />
-              Generate Schedule
+              <Plus className="w-5 h-5 mb-2" />
+              <span className="font-semibold">Generate Schedule</span>
             </Link>
           </div>
         </div>
       </div>
 
       {/* Recent Schedules */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Recent Schedules</h3>
+      <div className="card animate-slide-up">
+        <div className="px-6 py-6">
+          <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
+            <Calendar className="w-5 h-5 mr-2 text-indigo-600" />
+            Recent Schedules
+          </h3>
           {schedules.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No schedules yet. Generate your first schedule to get started.
+            <div className="text-center py-12">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-4">
+                <Calendar className="w-8 h-8 text-gray-400" />
+              </div>
+              <p className="text-gray-500 text-lg">No schedules yet.</p>
+              <p className="text-gray-400 text-sm mt-2">Generate your first schedule to get started.</p>
             </div>
           ) : (
             <div className="overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Period
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Created
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {schedules.map((schedule) => (
-                    <tr key={schedule.id}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {format(new Date(schedule.start_date), 'MMM dd')} - {format(new Date(schedule.end_date), 'MMM dd, yyyy')}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          schedule.status === 'published' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {schedule.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {format(new Date(schedule.created_at), 'MMM dd, yyyy')}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <Link
-                          to={`/schedule/${schedule.id}`}
-                          className="text-indigo-600 hover:text-indigo-900 inline-flex items-center"
-                        >
-                          <Eye className="w-4 h-4 mr-1" />
-                          View
-                        </Link>
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                        Period
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                        Created
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                        Actions
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-100">
+                    {schedules.map((schedule, idx) => (
+                      <tr key={schedule.id} className="hover:bg-indigo-50/50 transition-colors duration-150">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {format(new Date(schedule.start_date), 'MMM dd')} - {format(new Date(schedule.end_date), 'MMM dd, yyyy')}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`badge ${
+                            schedule.status === 'published' 
+                              ? 'bg-green-100 text-green-800 border border-green-200' 
+                              : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                          }`}>
+                            {schedule.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                          {format(new Date(schedule.created_at), 'MMM dd, yyyy')}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <Link
+                            to={`/schedule/${schedule.id}`}
+                            className="inline-flex items-center px-3 py-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-all duration-200"
+                          >
+                            <Eye className="w-4 h-4 mr-1" />
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
