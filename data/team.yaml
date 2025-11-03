@@ -1,0 +1,95 @@
+# Team Members Configuration
+# Each member has:
+#   - name: Full name
+#   - id: Unique identifier (optional, defaults to lowercase name)
+#   - office_days: List of weekday numbers (0=Monday, 6=Sunday). Default: [0,1,2,3,4] (Mon-Fri)
+#   - unavailable_dates: List of specific dates (YYYY-MM-DD) when unavailable
+#   - unavailable_ranges: List of date ranges (start/end inclusive)
+
+members:
+  - name: "Abebe Kebede"
+    id: "abebe_k"
+    office_days: [0, 1, 2, 3, 4]  # Mon-Fri
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Birhanu Tesfaye"
+    id: "birhanu_t"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Chaltu Alemayehu"
+    id: "chaltu_a"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Dawit Mengistu"
+    id: "dawit_m"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Eleni Bekele"
+    id: "eleni_b"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Fitsum Hailu"
+    id: "fitsum_h"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Genet Tadesse"
+    id: "genet_t"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Hirut Assefa"
+    id: "hirut_a"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Ibrahim Mohammed"
+    id: "ibrahim_m"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Jemila Ahmed"
+    id: "jemila_a"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Kebede Worku"
+    id: "kebede_w"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Liya Yohannes"
+    id: "liya_y"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+  
+  - name: "Mulugeta Demissie"
+    id: "mulugeta_d"
+    office_days: [0, 1, 2, 3, 4]
+    unavailable_dates: []
+    unavailable_ranges: []
+
+# Example of unavailable dates/ranges:
+#   unavailable_dates:
+#     - "2025-11-15"
+#     - "2025-11-20"
+#   unavailable_ranges:
+#     - start: "2025-12-01"
+#       end: "2025-12-07"
+

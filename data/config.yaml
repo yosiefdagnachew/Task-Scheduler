@@ -1,0 +1,33 @@
+# Scheduling Configuration
+
+# Timezone for all operations
+timezone: "Africa/Addis_Ababa"
+
+# Fairness window (rolling window in days)
+fairness_window_days: 90
+
+# ATM monitoring configuration
+atm:
+  # Rest rule: B-shift assignee gets next day off
+  rest_rule_enabled: true
+  
+  # Cooldown: minimum days between B-shift assignments for the same person
+  b_cooldown_days: 2
+  
+  # Time windows for ATM monitoring
+  windows:
+    morning:
+      start: "06:00"
+      end: "08:30"
+    midday:
+      start: "08:30"
+      end: "14:30"
+    night:
+      start: "14:30"
+      end: "22:00"
+
+# SysAid monitoring configuration
+sysaid:
+  # Week start day (0=Monday, 6=Sunday)
+  week_start_day: 0
+

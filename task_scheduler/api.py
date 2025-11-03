@@ -1,0 +1,636 @@
+"""FastAPI backend for task scheduler."""
+
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from datetime import date, datetime, timedelta
+from pydantic import BaseModel, Field
+import json
+
+from .database import db, TeamMemberDB, UnavailablePeriod, AssignmentDB, FairnessCount, ScheduleDB, TaskTypeDef, ShiftDef, SwapRequest
+from .models import TaskType, TeamMember, Assignment, Schedule, FairnessLedger
+from .config import SchedulingConfig
+from .scheduler import Scheduler
+from .export import export_to_csv, export_to_ics, export_audit_log
+from .loader import load_team
+
+app = FastAPI(title="Task Scheduler API", version="1.0.0")
+
+# CORS middleware for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pydantic models for API
+class TeamMemberCreate(BaseModel):
+    name: str
+    id: str
+    office_days: List[int] = Field(default=[0, 1, 2, 3, 4])
+    
+class TeamMemberResponse(BaseModel):
+    id: str
+    name: str
+    office_days: List[int]
+    unavailable_periods: List[dict] = []
+    
+    class Config:
+        from_attributes = True
+
+class UnavailablePeriodCreate(BaseModel):
+    member_id: str
+    start_date: date
+    end_date: date
+    reason: Optional[str] = None
+
+class ScheduleGenerateRequest(BaseModel):
+    start_date: date
+    end_date: date
+    config_override: Optional[dict] = None
+    tasks: Optional[List[str]] = None  # e.g., ["ATM", "SysAid"]
+    seed: Optional[int] = None
+    fairness_aggressiveness: Optional[int] = Field(default=1, ge=1, le=5)
+
+class AssignmentResponse(BaseModel):
+    id: int
+    task_type: str
+    member_id: str
+    member_name: str
+    assignment_date: date
+    week_start: Optional[date] = None
+    
+    class Config:
+        from_attributes = True
+
+class ScheduleResponse(BaseModel):
+    id: int
+    start_date: date
+    end_date: date
+    status: str
+    assignments: List[AssignmentResponse]
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Dependency to get database session
+def get_db():
+    session = db.get_session()
+    try:
+        yield session
+    finally:
+        session.close()
+
+# Helper functions
+def db_member_to_model(db_member: TeamMemberDB, session: Session) -> TeamMember:
+    """Convert database member to model."""
+    unavailable_dates = set()
+    unavailable_ranges = []
+    
+    for period in db_member.unavailable_periods:
+        if period.start_date == period.end_date:
+            unavailable_dates.add(period.start_date)
+        else:
+            unavailable_ranges.append((period.start_date, period.end_date))
+    
+    return TeamMember(
+        name=db_member.name,
+        id=db_member.id,
+        office_days=db_member.office_days or {0, 1, 2, 3, 4},
+        unavailable_dates=unavailable_dates,
+        unavailable_ranges=unavailable_ranges
+    )
+
+# API Endpoints
+
+@app.get("/")
+async def root():
+    return {"message": "Task Scheduler API", "version": "1.0.0"}
+
+@app.get("/api/health")
+async def health_check():
+    return {"status": "healthy", "database": "connected"}
+
+# Team Members
+@app.get("/api/team-members", response_model=List[TeamMemberResponse])
+async def get_team_members(session: Session = Depends(get_db)):
+    """Get all team members."""
+    members = session.query(TeamMemberDB).all()
+    result = []
+    for member in members:
+        periods = [
+            {
+                "id": p.id,
+                "start_date": p.start_date.isoformat(),
+                "end_date": p.end_date.isoformat(),
+                "reason": p.reason
+            }
+            for p in member.unavailable_periods
+        ]
+        result.append({
+            "id": member.id,
+            "name": member.name,
+            "office_days": list(member.office_days or []),
+            "unavailable_periods": periods
+        })
+    return result
+
+@app.post("/api/team-members", response_model=TeamMemberResponse)
+async def create_team_member(member: TeamMemberCreate, session: Session = Depends(get_db)):
+    """Create a new team member."""
+    existing = session.query(TeamMemberDB).filter(TeamMemberDB.id == member.id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Member with this ID already exists")
+    
+    db_member = TeamMemberDB(
+        id=member.id,
+        name=member.name,
+        office_days=set(member.office_days)
+    )
+    session.add(db_member)
+    session.commit()
+    session.refresh(db_member)
+    
+    return {
+        "id": db_member.id,
+        "name": db_member.name,
+        "office_days": list(db_member.office_days),
+        "unavailable_periods": []
+    }
+
+@app.put("/api/team-members/{member_id}", response_model=TeamMemberResponse)
+async def update_team_member(member_id: str, member: TeamMemberCreate, session: Session = Depends(get_db)):
+    """Update a team member."""
+    db_member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
+    if not db_member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    db_member.name = member.name
+    db_member.office_days = set(member.office_days)
+    db_member.updated_at = date.today()
+    session.commit()
+    session.refresh(db_member)
+    
+    periods = [
+        {
+            "id": p.id,
+            "start_date": p.start_date.isoformat(),
+            "end_date": p.end_date.isoformat(),
+            "reason": p.reason
+        }
+        for p in db_member.unavailable_periods
+    ]
+    
+    return {
+        "id": db_member.id,
+        "name": db_member.name,
+        "office_days": list(db_member.office_days),
+        "unavailable_periods": periods
+    }
+
+@app.delete("/api/team-members/{member_id}")
+async def delete_team_member(member_id: str, session: Session = Depends(get_db)):
+    """Delete a team member."""
+    db_member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
+    if not db_member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    session.delete(db_member)
+    session.commit()
+    return {"message": "Member deleted successfully"}
+
+# Unavailable Periods
+@app.post("/api/unavailable-periods")
+async def create_unavailable_period(period: UnavailablePeriodCreate, session: Session = Depends(get_db)):
+    """Create an unavailable period for a team member."""
+    member = session.query(TeamMemberDB).filter(TeamMemberDB.id == period.member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    db_period = UnavailablePeriod(
+        member_id=period.member_id,
+        start_date=period.start_date,
+        end_date=period.end_date,
+        reason=period.reason
+    )
+    session.add(db_period)
+    session.commit()
+    session.refresh(db_period)
+    
+    return {
+        "id": db_period.id,
+        "member_id": db_period.member_id,
+        "start_date": db_period.start_date.isoformat(),
+        "end_date": db_period.end_date.isoformat(),
+        "reason": db_period.reason
+    }
+
+@app.delete("/api/unavailable-periods/{period_id}")
+async def delete_unavailable_period(period_id: int, session: Session = Depends(get_db)):
+    """Delete an unavailable period."""
+    period = session.query(UnavailablePeriod).filter(UnavailablePeriod.id == period_id).first()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found")
+    
+    session.delete(period)
+    session.commit()
+    return {"message": "Period deleted successfully"}
+
+# Scheduling
+@app.post("/api/schedules/generate")
+async def generate_schedule(request: ScheduleGenerateRequest, session: Session = Depends(get_db)):
+    """Generate a new schedule."""
+    # Load team members from database
+    db_members = session.query(TeamMemberDB).all()
+    members = [db_member_to_model(m, session) for m in db_members]
+    
+    if not members:
+        raise HTTPException(status_code=400, detail="No team members available")
+    
+    # Load or create config
+    try:
+        config = SchedulingConfig.from_yaml("data/config.yaml")
+    except:
+        config = SchedulingConfig()
+    
+    # Override config if provided
+    if request.config_override:
+        for key, value in request.config_override.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+    
+    # Generate schedule
+    scheduler = Scheduler(config)
+    schedule = scheduler.generate_schedule(members, request.start_date, request.end_date)
+    
+    # Save to database
+    db_schedule = ScheduleDB(
+        start_date=request.start_date,
+        end_date=request.end_date,
+        status="draft",
+        created_at=datetime.now()
+    )
+    session.add(db_schedule)
+    session.flush()
+    
+    # Save assignments
+    for assignment in schedule.assignments:
+        db_assignment = AssignmentDB(
+            task_type=assignment.task_type,
+            member_id=assignment.assignee.id,
+            assignment_date=assignment.date,
+            week_start=assignment.week_start
+        )
+        session.add(db_assignment)
+        # Update fairness ledger
+        fairness_count = session.query(FairnessCount).filter(
+            FairnessCount.member_id == assignment.assignee.id,
+            FairnessCount.task_type == assignment.task_type
+        ).first()
+        
+        if not fairness_count:
+            from datetime import timedelta
+            fairness_count = FairnessCount(
+                member_id=assignment.assignee.id,
+                task_type=assignment.task_type,
+                count=0,
+                period_start=date.today() - timedelta(days=90),
+                period_end=date.today()
+            )
+            session.add(fairness_count)
+        
+        fairness_count.count += 1
+        fairness_count.updated_at = date.today()
+    
+    session.commit()
+    session.refresh(db_schedule)
+    
+    # Build response
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= request.start_date,
+        AssignmentDB.assignment_date <= request.end_date
+    ).all()
+    
+    assignment_responses = []
+    for a in assignments:
+        member = session.query(TeamMemberDB).filter(TeamMemberDB.id == a.member_id).first()
+        assignment_responses.append({
+            "id": a.id,
+            "task_type": a.task_type.value,
+            "member_id": a.member_id,
+            "member_name": member.name if member else "Unknown",
+            "assignment_date": a.assignment_date,
+            "week_start": a.week_start
+        })
+    
+    return {
+        "schedule_id": db_schedule.id,
+        "start_date": db_schedule.start_date.isoformat(),
+        "end_date": db_schedule.end_date.isoformat(),
+        "status": db_schedule.status,
+        "assignments": assignment_responses,
+        "audit_log": scheduler.audit.get_log()
+    }
+
+@app.get("/api/schedules", response_model=List[dict])
+async def get_schedules(session: Session = Depends(get_db)):
+    """Get all schedules."""
+    schedules = session.query(ScheduleDB).order_by(ScheduleDB.created_at.desc()).all()
+    result = []
+    for s in schedules:
+        result.append({
+            "id": s.id,
+            "start_date": s.start_date.isoformat(),
+            "end_date": s.end_date.isoformat(),
+            "status": s.status,
+            "created_at": s.created_at.isoformat()
+        })
+    return result
+
+@app.get("/api/schedules/{schedule_id}")
+async def get_schedule(schedule_id: int, session: Session = Depends(get_db)):
+    """Get a specific schedule with assignments."""
+    schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+    
+    assignment_responses = []
+    for a in assignments:
+        member = session.query(TeamMemberDB).filter(TeamMemberDB.id == a.member_id).first()
+        assignment_responses.append({
+            "id": a.id,
+            "task_type": a.task_type.value,
+            "member_id": a.member_id,
+            "member_name": member.name if member else "Unknown",
+            "assignment_date": a.assignment_date.isoformat(),
+            "week_start": a.week_start.isoformat() if a.week_start else None
+        })
+    
+    return {
+        "id": schedule.id,
+        "start_date": schedule.start_date.isoformat(),
+        "end_date": schedule.end_date.isoformat(),
+        "status": schedule.status,
+        "assignments": assignment_responses,
+        "created_at": schedule.created_at.isoformat()
+    }
+
+@app.get("/api/schedules/{schedule_id}/export/csv")
+async def export_schedule_csv(schedule_id: int, session: Session = Depends(get_db)):
+    """Export schedule to CSV."""
+    schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    # Build schedule model
+    db_members = session.query(TeamMemberDB).all()
+    members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
+    
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+    
+    schedule_assignments = []
+    for a in assignments:
+        member = members_dict.get(a.member_id)
+        if member:
+            assignment = Assignment(
+                task_type=a.task_type,
+                assignee=member,
+                date=a.assignment_date,
+                week_start=a.week_start
+            )
+            schedule_assignments.append(assignment)
+    
+    schedule_obj = Schedule(
+        assignments=schedule_assignments,
+        start_date=schedule.start_date,
+        end_date=schedule.end_date
+    )
+    
+    # Export
+    file_path = f"out/schedule_{schedule_id}.csv"
+    export_to_csv(schedule_obj, file_path)
+    
+    return FileResponse(file_path, media_type="text/csv", filename=f"schedule_{schedule_id}.csv")
+
+# Fairness
+@app.get("/api/fairness")
+async def get_fairness_counts(session: Session = Depends(get_db)):
+    """Get fairness counts for all members."""
+    members = session.query(TeamMemberDB).all()
+    result = []
+    
+    # Get assignments from last 90 days
+    from datetime import timedelta
+    cutoff_date = date.today() - timedelta(days=90)
+    
+    for member in members:
+        counts = {}
+        total = 0
+        for task_type in TaskType:
+            # Count assignments in the last 90 days
+            assignment_count = session.query(AssignmentDB).filter(
+                AssignmentDB.member_id == member.id,
+                AssignmentDB.task_type == task_type,
+                AssignmentDB.assignment_date >= cutoff_date
+            ).count()
+            counts[task_type.value] = assignment_count
+            total += assignment_count
+        
+        result.append({
+            "member_id": member.id,
+            "member_name": member.name,
+            "counts": counts,
+            "total": total
+        })
+    
+    return result
+
+# Configuration
+@app.get("/api/config")
+async def get_config():
+    """Get current configuration."""
+    try:
+        config = SchedulingConfig.from_yaml("data/config.yaml")
+        return {
+            "timezone": config.timezone,
+            "fairness_window_days": config.fairness_window_days,
+            "atm": {
+                "rest_rule_enabled": config.atm_rest_rule_enabled,
+                "b_cooldown_days": config.atm_b_cooldown_days,
+                "windows": {
+                    "morning": {
+                        "start": config.atm_morning_window_start.strftime("%H:%M"),
+                        "end": config.atm_morning_window_end.strftime("%H:%M")
+                    },
+                    "midday": {
+                        "start": config.atm_midday_window_start.strftime("%H:%M"),
+                        "end": config.atm_midday_window_end.strftime("%H:%M")
+                    },
+                    "night": {
+                        "start": config.atm_night_window_start.strftime("%H:%M"),
+                        "end": config.atm_night_window_end.strftime("%H:%M")
+                    }
+                }
+            },
+            "sysaid": {
+                "week_start_day": config.sysaid_week_start_day
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup."""
+    db.create_tables()
+
+# Task Types CRUD
+class ShiftDefModel(BaseModel):
+    label: str
+    start_time: str
+    end_time: str
+    required_count: int = 1
+
+class TaskTypeDefCreate(BaseModel):
+    name: str
+    recurrence: str
+    required_count: int = 1
+    role_labels: List[str] = []
+    rules_json: Optional[dict] = None
+    shifts: List[ShiftDefModel] = []
+
+@app.get("/api/task-types")
+async def list_task_types(session: Session = Depends(get_db)):
+    items = session.query(TaskTypeDef).all()
+    result = []
+    for t in items:
+        shifts = session.query(ShiftDef).filter(ShiftDef.task_type_id == t.id).all()
+        result.append({
+            "id": t.id,
+            "name": t.name,
+            "recurrence": t.recurrence,
+            "required_count": t.required_count,
+            "role_labels": t.role_labels or [],
+            "rules_json": json.loads(t.rules_json) if t.rules_json else None,
+            "shifts": [
+                {"id": s.id, "label": s.label, "start_time": s.start_time, "end_time": s.end_time, "required_count": s.required_count}
+                for s in shifts
+            ]
+        })
+    return result
+
+@app.post("/api/task-types")
+async def create_task_type(payload: TaskTypeDefCreate, session: Session = Depends(get_db)):
+    t = TaskTypeDef(
+        name=payload.name,
+        recurrence=payload.recurrence,
+        required_count=payload.required_count,
+        role_labels=payload.role_labels,
+        rules_json=json.dumps(payload.rules_json) if payload.rules_json else None
+    )
+    session.add(t)
+    session.flush()
+    
+    for sh in payload.shifts:
+        s = ShiftDef(
+            task_type_id=t.id,
+            label=sh.label,
+            start_time=sh.start_time,
+            end_time=sh.end_time,
+            required_count=sh.required_count
+        )
+        session.add(s)
+    session.commit()
+    return {"id": t.id}
+
+@app.delete("/api/task-types/{task_type_id}")
+async def delete_task_type(task_type_id: int, session: Session = Depends(get_db)):
+    session.query(ShiftDef).filter(ShiftDef.task_type_id == task_type_id).delete()
+    session.query(TaskTypeDef).filter(TaskTypeDef.id == task_type_id).delete()
+    session.commit()
+    return {"message": "Deleted"}
+
+# Swaps
+class SwapRequestCreate(BaseModel):
+    assignment_id: int
+    requested_by: str
+    proposed_member_id: Optional[str] = None
+    reason: Optional[str] = None
+
+@app.post("/api/swaps")
+async def propose_swap(payload: SwapRequestCreate, session: Session = Depends(get_db)):
+    assignment = session.query(AssignmentDB).filter(AssignmentDB.id == payload.assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    
+    swap = SwapRequest(
+        assignment_id=payload.assignment_id,
+        requested_by=payload.requested_by,
+        proposed_member_id=payload.proposed_member_id,
+        reason=payload.reason,
+        status="pending"
+    )
+    session.add(swap)
+    session.commit()
+    session.refresh(swap)
+    return {"id": swap.id, "status": swap.status}
+
+@app.post("/api/swaps/{swap_id}/decision")
+async def decide_swap(swap_id: int, approve: bool, session: Session = Depends(get_db)):
+    swap = session.query(SwapRequest).filter(SwapRequest.id == swap_id).first()
+    if not swap:
+        raise HTTPException(status_code=404, detail="Swap not found")
+    swap.status = "approved" if approve else "rejected"
+    swap.decided_at = datetime.now()
+    
+    # Apply change if approved and proposed member exists
+    if approve and swap.proposed_member_id:
+        assignment = session.query(AssignmentDB).filter(AssignmentDB.id == swap.assignment_id).first()
+        if assignment:
+            assignment.member_id = swap.proposed_member_id
+    
+    session.commit()
+    return {"id": swap.id, "status": swap.status}
+
+# Update assignment (manual edit)
+class AssignmentUpdate(BaseModel):
+    member_id: str
+
+@app.patch("/api/assignments/{assignment_id}")
+async def update_assignment(assignment_id: int, payload: AssignmentUpdate, session: Session = Depends(get_db)):
+    assignment = session.query(AssignmentDB).filter(AssignmentDB.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    member = session.query(TeamMemberDB).filter(TeamMemberDB.id == payload.member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    assignment.member_id = payload.member_id
+    session.commit()
+    return {"message": "Assignment updated"}
+
+# Exports: Excel/PDF (basic stubs)
+@app.get("/api/schedules/{schedule_id}/export/excel")
+async def export_schedule_excel(schedule_id: int):
+    # For brevity, return 501 Not Implemented in this MVP
+    raise HTTPException(status_code=501, detail="Excel export not implemented yet")
+
+@app.get("/api/schedules/{schedule_id}/export/pdf")
+async def export_schedule_pdf(schedule_id: int):
+    # For brevity, return 501 Not Implemented in this MVP
+    raise HTTPException(status_code=501, detail="PDF export not implemented yet")
+
+
