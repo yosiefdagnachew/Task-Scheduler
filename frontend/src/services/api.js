@@ -14,6 +14,7 @@ export const getTeamMembers = () => api.get('/team-members');
 export const createTeamMember = (member) => api.post('/team-members', member);
 export const updateTeamMember = (memberId, member) => api.put(`/team-members/${memberId}`, member);
 export const deleteTeamMember = (memberId) => api.delete(`/team-members/${memberId}`);
+export const changeMemberId = (memberId, newId) => api.patch(`/team-members/${memberId}/id`, { new_id: newId });
 
 // Unavailable Periods
 export const createUnavailablePeriod = (period) => api.post('/unavailable-periods', period);
@@ -26,6 +27,7 @@ export const getSchedule = (scheduleId) => api.get(`/schedules/${scheduleId}`);
 export const exportScheduleCSV = (scheduleId) => api.get(`/schedules/${scheduleId}/export/csv`, { responseType: 'blob' });
 export const exportScheduleExcel = (scheduleId) => api.get(`/schedules/${scheduleId}/export/excel`, { responseType: 'blob' });
 export const exportSchedulePDF = (scheduleId) => api.get(`/schedules/${scheduleId}/export/pdf`, { responseType: 'blob' });
+export const deleteSchedule = (scheduleId) => api.delete(`/schedules/${scheduleId}`);
 
 // Fairness
 export const getFairnessCounts = () => api.get('/fairness');

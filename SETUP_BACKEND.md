@@ -7,17 +7,20 @@ The backend requires Python 3.8+. You need to install Python first.
 ### Install Python (Windows)
 
 **Option 1: Using winget (Recommended)**
+
 ```powershell
 winget install -e --id Python.Python.3.11
 ```
 
 **Option 2: Download from python.org**
+
 1. Visit https://www.python.org/downloads/
 2. Download Python 3.11.x for Windows
 3. Run installer
 4. ✅ Check "Add Python to PATH" during installation
 
 **Option 3: Using Chocolatey**
+
 ```powershell
 choco install python --version=3.11.9 -y
 ```
@@ -42,9 +45,9 @@ py --version
 
 Once Python is installed, run these commands:
 
-```powershell
+````powershell
 # Navigate to project directory
-cd "E:\task scheduler"
+cd "E:python run_server.py\task scheduler"
 
 # Create virtual environment
 python -m venv .venv
@@ -66,8 +69,8 @@ pip install -r requirements.txt
 python init_db.py
 
 # Start backend server
-python run_server.py
-```
+
+```pyhton run_server.py
 
 The backend will be available at:
 - **API**: http://localhost:8000
@@ -92,3 +95,4 @@ The backend will be available at:
 - Change port in `run_server.py`: `port=8001`
 - Or stop the process using port 8000
 
+````

@@ -49,6 +49,9 @@ class UnavailablePeriodCreate(BaseModel):
     end_date: date
     reason: Optional[str] = None
 
+class MemberIdUpdate(BaseModel):
+    new_id: str
+
 class ScheduleGenerateRequest(BaseModel):
     start_date: date
     end_date: date
@@ -193,6 +196,33 @@ async def update_team_member(member_id: str, member: TeamMemberCreate, session: 
         "office_days": list(db_member.office_days),
         "unavailable_periods": periods
     }
+
+@app.patch("/api/team-members/{member_id}/id")
+async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Session = Depends(get_db)):
+    """Change a member's ID and cascade to related tables."""
+    if not payload.new_id:
+        raise HTTPException(status_code=400, detail="new_id is required")
+    existing = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if payload.new_id == member_id:
+        return {"message": "No change"}
+    # Ensure target ID not taken
+    conflict = session.query(TeamMemberDB).filter(TeamMemberDB.id == payload.new_id).first()
+    if conflict:
+        raise HTTPException(status_code=400, detail="Target ID already exists")
+
+    # Update foreign key references
+    session.query(UnavailablePeriod).filter(UnavailablePeriod.member_id == member_id).update({UnavailablePeriod.member_id: payload.new_id})
+    session.query(AssignmentDB).filter(AssignmentDB.member_id == member_id).update({AssignmentDB.member_id: payload.new_id})
+    session.query(FairnessCount).filter(FairnessCount.member_id == member_id).update({FairnessCount.member_id: payload.new_id})
+    session.query(SwapRequest).filter(SwapRequest.requested_by == member_id).update({SwapRequest.requested_by: payload.new_id})
+    session.query(SwapRequest).filter(SwapRequest.proposed_member_id == member_id).update({SwapRequest.proposed_member_id: payload.new_id})
+
+    # Update member row
+    existing.id = payload.new_id
+    session.commit()
+    return {"message": "Member ID updated", "id": payload.new_id}
 
 @app.delete("/api/team-members/{member_id}")
 async def delete_team_member(member_id: str, session: Session = Depends(get_db)):
@@ -352,6 +382,40 @@ async def get_schedules(session: Session = Depends(get_db)):
             "created_at": s.created_at.isoformat()
         })
     return result
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int, session: Session = Depends(get_db)):
+    """Delete a schedule and its assignments; adjust fairness counters accordingly."""
+    schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    # Fetch assignments in range
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+
+    # Decrement fairness counts for these assignments if rows exist
+    for a in assignments:
+        fc = session.query(FairnessCount).filter(
+            FairnessCount.member_id == a.member_id,
+            FairnessCount.task_type == a.task_type
+        ).first()
+        if fc and fc.count and fc.count > 0:
+            fc.count -= 1
+            fc.updated_at = date.today()
+
+    # Delete assignments
+    session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).delete(synchronize_session=False)
+
+    # Delete schedule
+    session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).delete()
+    session.commit()
+    return {"message": "Schedule deleted"}
 
 @app.get("/api/schedules/{schedule_id}")
 async def get_schedule(schedule_id: int, session: Session = Depends(get_db)):

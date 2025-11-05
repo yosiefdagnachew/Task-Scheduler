@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Download, ArrowLeft, Calendar as CalendarIcon } from 'lucide-react';
-import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, updateAssignment, getTeamMembers } from '../services/api';
+import { Download, ArrowLeft, Trash2 } from 'lucide-react';
+import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, updateAssignment, getTeamMembers, deleteSchedule } from '../services/api';
 import { format, eachDayOfInterval, parseISO } from 'date-fns';
 
 const TASK_COLORS = {
@@ -125,6 +125,16 @@ export default function ScheduleView() {
           </p>
         </div>
         <div className="space-x-2">
+          <button
+            onClick={async ()=>{
+              if (!window.confirm('Delete this schedule? This cannot be undone.')) return;
+              try { await deleteSchedule(id); navigate('/'); } catch(e){ alert('Failed to delete'); }
+            }}
+            className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete
+          </button>
           <button
             onClick={handleExport}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"

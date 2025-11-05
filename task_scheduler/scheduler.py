@@ -56,28 +56,16 @@ class Scheduler:
     ) -> List[Assignment]:
         """Schedule ATM monitoring tasks (daily)."""
         assignments = []
-        rest_days: Set[date] = set()  # Track rest days from previous B-shifts
         
         current_date = start_date
         while current_date <= end_date:
-            # Get existing rest days from previous assignments
-            for assignment in assignments:
-                if assignment.task_type == TaskType.ATM_MIDNIGHT:
-                    rest_day = assignment.date + timedelta(days=1)
-                    if rest_day <= end_date:
-                        rest_days.add(rest_day)
-            
-            # Skip if this is a rest day
-            if current_date in rest_days:
-                current_date += timedelta(days=1)
-                continue
             
             # Find eligible members for this date
             eligible_for_a = self._get_eligible_members(
-                members, current_date, TaskType.ATM_MORNING, rest_days, assignments
+                members, current_date, TaskType.ATM_MORNING, assignments
             )
             eligible_for_b = self._get_eligible_members(
-                members, current_date, TaskType.ATM_MIDNIGHT, rest_days, assignments
+                members, current_date, TaskType.ATM_MIDNIGHT, assignments
             )
             
             # Remove members already assigned today
@@ -117,10 +105,9 @@ class Scheduler:
                     date=current_date
                 ))
                 
-                # Mark next day as rest day for B
+                # Log with rest info
                 if self.config.atm_rest_rule_enabled:
                     rest_day = current_date + timedelta(days=1)
-                    rest_days.add(rest_day)
                     self.audit.log(f"{current_date} - Assigned {assignee_a.name} (A) and {assignee_b.name} (B). {assignee_b.name} rests on {rest_day}")
                 else:
                     self.audit.log(f"{current_date} - Assigned {assignee_a.name} (A) and {assignee_b.name} (B)")
@@ -144,8 +131,12 @@ class Scheduler:
     ) -> List[Assignment]:
         """Schedule SysAid tasks (weekly)."""
         assignments = []
-        # Get rest days from existing ATM assignments
-        rest_days = existing_schedule.get_rest_days()
+        # Build per-member rest-day map from existing ATM assignments
+        b_assignments = [a for a in existing_schedule.assignments if a.task_type == TaskType.ATM_MIDNIGHT]
+        member_rest_days = {}
+        for a in b_assignments:
+            rd = a.date + timedelta(days=1)
+            member_rest_days.setdefault(a.assignee.id, set()).add(rd)
         
         # Find week boundaries
         current_date = start_date
@@ -168,9 +159,10 @@ class Scheduler:
             # Find eligible members (must be in office for all days of the week)
             eligible_members = []
             for member in members:
-                # Check if member is available for all days in the week
+                # Check if member is available for all days in the week and not resting (per-member)
+                rest_set = member_rest_days.get(member.id, set())
                 is_available_all_week = all(
-                    member.is_available_on(d) and d not in rest_days
+                    member.is_available_on(d) and (d not in rest_set)
                     for d in week_dates
                 )
                 if is_available_all_week:
@@ -217,7 +209,6 @@ class Scheduler:
         members: List[TeamMember],
         check_date: date,
         task_type: TaskType,
-        rest_days: Set[date],
         existing_assignments: List[Assignment]
     ) -> List[TeamMember]:
         """Get members eligible for a task on a specific date."""
@@ -227,10 +218,15 @@ class Scheduler:
             # Must be available on the date
             if not member.is_available_on(check_date):
                 continue
-            
-            # Must not be on rest day
-            if check_date in rest_days:
-                continue
+
+            # If rest rule applies: a member who did ATM_MIDNIGHT on D must rest on D+1 for ALL ATM tasks
+            if self.config.atm_rest_rule_enabled:
+                had_b_previous_day = any(
+                    a.task_type == TaskType.ATM_MIDNIGHT and a.assignee.id == member.id and (check_date - a.date).days == 1
+                    for a in existing_assignments
+                )
+                if had_b_previous_day:
+                    continue
             
             # For B-shift, check cooldown (avoid consecutive B-shifts)
             if task_type == TaskType.ATM_MIDNIGHT:

@@ -6,7 +6,8 @@ import {
   updateTeamMember,
   deleteTeamMember,
   createUnavailablePeriod,
-  deleteUnavailablePeriod
+  deleteUnavailablePeriod,
+  changeMemberId
 } from '../services/api';
 import { format } from 'date-fns';
 
@@ -49,7 +50,11 @@ export default function TeamManagement() {
     e.preventDefault();
     try {
       if (selectedMember) {
-        await updateTeamMember(selectedMember.id, formData);
+        // If ID changed, update ID first, then other fields
+        if (selectedMember.id !== formData.id) {
+          await changeMemberId(selectedMember.id, formData.id);
+        }
+        await updateTeamMember(formData.id, formData);
       } else {
         await createTeamMember(formData);
       }
@@ -241,10 +246,9 @@ export default function TeamManagement() {
                 <input
                   type="text"
                   required
-                  disabled={!!selectedMember}
                   value={formData.id}
                   onChange={(e) => setFormData({ ...formData, id: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
-                  className="input-field disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  className="input-field"
                   placeholder="member_id"
                 />
               </div>
