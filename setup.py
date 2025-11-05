@@ -11,7 +11,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="task-scheduler",
     version="1.0.0",
-    author="Task Scheduler Team",
+    author="Yosief Dagnachew",
     description="A fair, auditable task scheduling system for ATM and SysAid monitoring",
     long_description=long_description,
     long_description_content_type="text/markdown",

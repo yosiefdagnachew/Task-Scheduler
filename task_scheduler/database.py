@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.types import TypeDecorator, VARCHAR
 import json
 from typing import List, Set
+import os
 from .models import TaskType
 
 Base = declarative_base()
@@ -161,11 +162,25 @@ class SwapRequest(Base):
     requested_by_member = relationship("TeamMemberDB", foreign_keys=[requested_by])
     proposed_member = relationship("TeamMemberDB", foreign_keys=[proposed_member_id])
 
+
+class User(Base):
+    """Application user for authentication."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, default="member")  # member, admin (extensible)
+    created_at = Column(DateTime, default=datetime.now)
+    member_id = Column(String, ForeignKey("team_members.id"), nullable=True)
+
 class Database:
     """Database connection and session management."""
     
-    def __init__(self, database_url: str = "sqlite:///./task_scheduler.db"):
-        self.engine = create_engine(database_url, connect_args={"check_same_thread": False} if "sqlite" in database_url else {})
+    def __init__(self, database_url: str | None = None):
+        url = database_url or os.getenv("DATABASE_URL", "sqlite:///./task_scheduler.db")
+        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        self.engine = create_engine(url, connect_args=connect_args)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
     
     def create_tables(self):

@@ -1,6 +1,7 @@
 """FastAPI backend for task scheduler."""
 
 from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -10,14 +11,46 @@ from datetime import date, datetime, timedelta
 from pydantic import BaseModel, Field
 import json
 
-from .database import db, TeamMemberDB, UnavailablePeriod, AssignmentDB, FairnessCount, ScheduleDB, TaskTypeDef, ShiftDef, SwapRequest
+from .database import db, TeamMemberDB, UnavailablePeriod, AssignmentDB, FairnessCount, ScheduleDB, TaskTypeDef, ShiftDef, SwapRequest, User
 from .models import TaskType, TeamMember, Assignment, Schedule, FairnessLedger
 from .config import SchedulingConfig
 from .scheduler import Scheduler
-from .export import export_to_csv, export_to_ics, export_audit_log
+from .export import export_to_csv, export_to_ics, export_audit_log, export_to_xlsx
 from .loader import load_team
+from jose import jwt, JWTError
+import os
+from passlib.context import CryptContext
 
 app = FastAPI(title="Task Scheduler API", version="1.0.0")
+# Auth helpers
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    return pwd_context.verify(plain_password, password_hash)
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+class RegisterPayload(BaseModel):
+    username: str
+    password: str
+    role: Optional[str] = "member"
+    member_id: Optional[str] = None
+
 
 # CORS middleware for frontend
 app.add_middleware(
@@ -90,6 +123,25 @@ def get_db():
     finally:
         session.close()
 
+def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)) -> User:
+    cred_exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise cred_exc
+    except JWTError:
+        raise cred_exc
+    user = session.query(User).filter(User.username == username).first()
+    if not user:
+        raise cred_exc
+    return user
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
 # Helper functions
 def db_member_to_model(db_member: TeamMemberDB, session: Session) -> TeamMember:
     """Convert database member to model."""
@@ -120,9 +172,33 @@ async def root():
 async def health_check():
     return {"status": "healthy", "database": "connected"}
 
+# Auth endpoints
+@app.post("/api/auth/register")
+async def register(payload: RegisterPayload, session: Session = Depends(get_db)):
+    existing = session.query(User).filter(User.username == payload.username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    password_hash = get_password_hash(payload.password)
+    user = User(username=payload.username, password_hash=password_hash, role=payload.role or "member", member_id=payload.member_id)
+    session.add(user)
+    session.commit()
+    return {"message": "Registered"}
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_db)):
+    user = session.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    token = create_access_token({"sub": user.username, "role": user.role, "member_id": user.member_id})
+    return TokenResponse(access_token=token)
+
+@app.get("/api/me")
+async def me(current: User = Depends(get_current_user)):
+    return {"username": current.username, "role": current.role, "member_id": current.member_id}
+
 # Team Members
 @app.get("/api/team-members", response_model=List[TeamMemberResponse])
-async def get_team_members(session: Session = Depends(get_db)):
+async def get_team_members(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Get all team members."""
     members = session.query(TeamMemberDB).all()
     result = []
@@ -145,7 +221,7 @@ async def get_team_members(session: Session = Depends(get_db)):
     return result
 
 @app.post("/api/team-members", response_model=TeamMemberResponse)
-async def create_team_member(member: TeamMemberCreate, session: Session = Depends(get_db)):
+async def create_team_member(member: TeamMemberCreate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Create a new team member."""
     existing = session.query(TeamMemberDB).filter(TeamMemberDB.id == member.id).first()
     if existing:
@@ -168,7 +244,7 @@ async def create_team_member(member: TeamMemberCreate, session: Session = Depend
     }
 
 @app.put("/api/team-members/{member_id}", response_model=TeamMemberResponse)
-async def update_team_member(member_id: str, member: TeamMemberCreate, session: Session = Depends(get_db)):
+async def update_team_member(member_id: str, member: TeamMemberCreate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Update a team member."""
     db_member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
     if not db_member:
@@ -198,7 +274,7 @@ async def update_team_member(member_id: str, member: TeamMemberCreate, session: 
     }
 
 @app.patch("/api/team-members/{member_id}/id")
-async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Session = Depends(get_db)):
+async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Change a member's ID and cascade to related tables."""
     if not payload.new_id:
         raise HTTPException(status_code=400, detail="new_id is required")
@@ -225,7 +301,7 @@ async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Ses
     return {"message": "Member ID updated", "id": payload.new_id}
 
 @app.delete("/api/team-members/{member_id}")
-async def delete_team_member(member_id: str, session: Session = Depends(get_db)):
+async def delete_team_member(member_id: str, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Delete a team member."""
     db_member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
     if not db_member:
@@ -237,12 +313,16 @@ async def delete_team_member(member_id: str, session: Session = Depends(get_db))
 
 # Unavailable Periods
 @app.post("/api/unavailable-periods")
-async def create_unavailable_period(period: UnavailablePeriodCreate, session: Session = Depends(get_db)):
+async def create_unavailable_period(period: UnavailablePeriodCreate, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Create an unavailable period for a team member."""
     member = session.query(TeamMemberDB).filter(TeamMemberDB.id == period.member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     
+    # Only allow members to modify their own unavailable periods unless admin
+    if user.role != "admin" and user.member_id != period.member_id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
     db_period = UnavailablePeriod(
         member_id=period.member_id,
         start_date=period.start_date,
@@ -262,19 +342,22 @@ async def create_unavailable_period(period: UnavailablePeriodCreate, session: Se
     }
 
 @app.delete("/api/unavailable-periods/{period_id}")
-async def delete_unavailable_period(period_id: int, session: Session = Depends(get_db)):
+async def delete_unavailable_period(period_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Delete an unavailable period."""
     period = session.query(UnavailablePeriod).filter(UnavailablePeriod.id == period_id).first()
     if not period:
         raise HTTPException(status_code=404, detail="Period not found")
     
+    # Only owner or admin can delete
+    if user.role != "admin" and user.member_id != period.member_id:
+        raise HTTPException(status_code=403, detail="Not allowed")
     session.delete(period)
     session.commit()
     return {"message": "Period deleted successfully"}
 
 # Scheduling
 @app.post("/api/schedules/generate")
-async def generate_schedule(request: ScheduleGenerateRequest, session: Session = Depends(get_db)):
+async def generate_schedule(request: ScheduleGenerateRequest, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Generate a new schedule."""
     # Load team members from database
     db_members = session.query(TeamMemberDB).all()
@@ -369,7 +452,7 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
     }
 
 @app.get("/api/schedules", response_model=List[dict])
-async def get_schedules(session: Session = Depends(get_db)):
+async def get_schedules(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Get all schedules."""
     schedules = session.query(ScheduleDB).order_by(ScheduleDB.created_at.desc()).all()
     result = []
@@ -384,7 +467,7 @@ async def get_schedules(session: Session = Depends(get_db)):
     return result
 
 @app.delete("/api/schedules/{schedule_id}")
-async def delete_schedule(schedule_id: int, session: Session = Depends(get_db)):
+async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Delete a schedule and its assignments; adjust fairness counters accordingly."""
     schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
     if not schedule:
@@ -418,7 +501,7 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db)):
     return {"message": "Schedule deleted"}
 
 @app.get("/api/schedules/{schedule_id}")
-async def get_schedule(schedule_id: int, session: Session = Depends(get_db)):
+async def get_schedule(schedule_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Get a specific schedule with assignments."""
     schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
     if not schedule:
@@ -451,7 +534,7 @@ async def get_schedule(schedule_id: int, session: Session = Depends(get_db)):
     }
 
 @app.get("/api/schedules/{schedule_id}/export/csv")
-async def export_schedule_csv(schedule_id: int, session: Session = Depends(get_db)):
+async def export_schedule_csv(schedule_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Export schedule to CSV."""
     schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
     if not schedule:
@@ -489,6 +572,44 @@ async def export_schedule_csv(schedule_id: int, session: Session = Depends(get_d
     export_to_csv(schedule_obj, file_path)
     
     return FileResponse(file_path, media_type="text/csv", filename=f"schedule_{schedule_id}.csv")
+
+@app.get("/api/schedules/{schedule_id}/export/xlsx")
+async def export_schedule_xlsx(schedule_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Export schedule to XLSX (vertical layout)."""
+    schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    # Build schedule model
+    db_members = session.query(TeamMemberDB).all()
+    members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
+
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+
+    schedule_assignments = []
+    for a in assignments:
+        member = members_dict.get(a.member_id)
+        if member:
+            assignment = Assignment(
+                task_type=a.task_type,
+                assignee=member,
+                date=a.assignment_date,
+                week_start=a.week_start
+            )
+            schedule_assignments.append(assignment)
+
+    schedule_obj = Schedule(
+        assignments=schedule_assignments,
+        start_date=schedule.start_date,
+        end_date=schedule.end_date
+    )
+
+    file_path = f"out/schedule_{schedule_id}.xlsx"
+    export_to_xlsx(schedule_obj, file_path)
+    return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=f"schedule_{schedule_id}.xlsx")
 
 # Fairness
 @app.get("/api/fairness")
@@ -578,7 +699,7 @@ class TaskTypeDefCreate(BaseModel):
     shifts: List[ShiftDefModel] = []
 
 @app.get("/api/task-types")
-async def list_task_types(session: Session = Depends(get_db)):
+async def list_task_types(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     items = session.query(TaskTypeDef).all()
     result = []
     for t in items:
@@ -598,7 +719,7 @@ async def list_task_types(session: Session = Depends(get_db)):
     return result
 
 @app.post("/api/task-types")
-async def create_task_type(payload: TaskTypeDefCreate, session: Session = Depends(get_db)):
+async def create_task_type(payload: TaskTypeDefCreate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     t = TaskTypeDef(
         name=payload.name,
         recurrence=payload.recurrence,
@@ -622,7 +743,32 @@ async def create_task_type(payload: TaskTypeDefCreate, session: Session = Depend
     return {"id": t.id}
 
 @app.delete("/api/task-types/{task_type_id}")
-async def delete_task_type(task_type_id: int, session: Session = Depends(get_db)):
+async def delete_task_type(task_type_id: int, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    session.query(ShiftDef).filter(ShiftDef.task_type_id == task_type_id).delete()
+    session.query(TaskTypeDef).filter(TaskTypeDef.id == task_type_id).delete()
+    session.commit()
+    return {"message": "Deleted"}
+
+class TaskTypeDefUpdate(TaskTypeDefCreate):
+    pass
+
+@app.put("/api/task-types/{task_type_id}")
+async def update_task_type(task_type_id: int, payload: TaskTypeDefUpdate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    t = session.query(TaskTypeDef).filter(TaskTypeDef.id == task_type_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Not found")
+    session.query(ShiftDef).filter(ShiftDef.task_type_id == t.id).delete()
+    t.name = payload.name
+    t.recurrence = payload.recurrence
+    t.required_count = payload.required_count
+    t.role_labels = payload.role_labels
+    t.rules_json = json.dumps(payload.rules_json) if payload.rules_json else None
+    session.flush()
+    for sh in payload.shifts:
+        s = ShiftDef(task_type_id=t.id, label=sh.label, start_time=sh.start_time, end_time=sh.end_time, required_count=sh.required_count)
+        session.add(s)
+    session.commit()
+    return {"message": "Updated"}
     session.query(ShiftDef).filter(ShiftDef.task_type_id == task_type_id).delete()
     session.query(TaskTypeDef).filter(TaskTypeDef.id == task_type_id).delete()
     session.commit()
@@ -636,7 +782,7 @@ class SwapRequestCreate(BaseModel):
     reason: Optional[str] = None
 
 @app.post("/api/swaps")
-async def propose_swap(payload: SwapRequestCreate, session: Session = Depends(get_db)):
+async def propose_swap(payload: SwapRequestCreate, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     assignment = session.query(AssignmentDB).filter(AssignmentDB.id == payload.assignment_id).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -654,7 +800,7 @@ async def propose_swap(payload: SwapRequestCreate, session: Session = Depends(ge
     return {"id": swap.id, "status": swap.status}
 
 @app.post("/api/swaps/{swap_id}/decision")
-async def decide_swap(swap_id: int, approve: bool, session: Session = Depends(get_db)):
+async def decide_swap(swap_id: int, approve: bool, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     swap = session.query(SwapRequest).filter(SwapRequest.id == swap_id).first()
     if not swap:
         raise HTTPException(status_code=404, detail="Swap not found")
@@ -675,7 +821,7 @@ class AssignmentUpdate(BaseModel):
     member_id: str
 
 @app.patch("/api/assignments/{assignment_id}")
-async def update_assignment(assignment_id: int, payload: AssignmentUpdate, session: Session = Depends(get_db)):
+async def update_assignment(assignment_id: int, payload: AssignmentUpdate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     assignment = session.query(AssignmentDB).filter(AssignmentDB.id == assignment_id).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")

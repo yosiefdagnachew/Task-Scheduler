@@ -6,6 +6,8 @@ from typing import List
 import pytz
 from ics import Calendar, Event
 from .models import Schedule, Assignment, TaskType
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 
 
 def export_to_csv(schedule: Schedule, file_path: str):
@@ -50,12 +52,22 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
         # Set times based on task type
         from datetime import time as time_class
         if task_type == TaskType.ATM_MORNING:
-            start_time = datetime.combine(assignment_date, time_class(6, 0))
-            end_time = datetime.combine(assignment_date, time_class(8, 30))
+            # Sunday special: up to 09:00
+            if assignment_date.weekday() == 6:
+                start_time = datetime.combine(assignment_date, time_class(7, 30))
+                end_time = datetime.combine(assignment_date, time_class(9, 0))
+            else:
+                start_time = datetime.combine(assignment_date, time_class(7, 30))
+                end_time = datetime.combine(assignment_date, time_class(8, 30))
             title = f"ATM Morning Report - {assignee_names}"
         elif task_type == TaskType.ATM_MIDNIGHT:
-            start_time = datetime.combine(assignment_date, time_class(8, 30))
-            end_time = datetime.combine(assignment_date, time_class(22, 0))
+            if assignment_date.weekday() == 6:
+                # Sunday second slot 09:00 - 16:00
+                start_time = datetime.combine(assignment_date, time_class(9, 0))
+                end_time = datetime.combine(assignment_date, time_class(16, 0))
+            else:
+                start_time = datetime.combine(assignment_date, time_class(13, 0))
+                end_time = datetime.combine(assignment_date, time_class(22, 0))
             title = f"ATM Mid-day/Night Report - {assignee_names}"
         elif task_type == TaskType.SYSAID_MAKER:
             start_time = datetime.combine(assignment_date, time_class(9, 0))
@@ -93,4 +105,50 @@ def export_audit_log(audit_log: str, file_path: str):
         f.write("SCHEDULING AUDIT LOG\n")
         f.write("=" * 50 + "\n\n")
         f.write(audit_log)
+
+
+def export_to_xlsx(schedule: Schedule, file_path: str):
+    """Export schedule to XLSX with vertical layout (dates as rows)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Schedule"
+
+    # Columns: Date, ATM Morning, ATM Mid/Night, SysAid Maker, SysAid Checker
+    headers = [
+        "Date",
+        "ATM Morning (07:30-08:30)",
+        "ATM Mid/Night",
+        "SysAid Maker",
+        "SysAid Checker"
+    ]
+    ws.append(headers)
+
+    # Group by date
+    by_date = {}
+    for a in schedule.assignments:
+        d = a.date
+        by_date.setdefault(d, []).append(a)
+
+    for day in sorted(by_date.keys()):
+        row = [day.isoformat(), "", "", "", ""]
+        for a in by_date[day]:
+            if a.task_type == TaskType.ATM_MORNING:
+                row[1] = a.assignee.name
+            elif a.task_type == TaskType.ATM_MIDNIGHT:
+                row[2] = a.assignee.name
+            elif a.task_type == TaskType.SYSAID_MAKER:
+                row[3] = a.assignee.name
+            elif a.task_type == TaskType.SYSAID_CHECKER:
+                row[4] = a.assignee.name
+        ws.append(row)
+
+    # Autosize columns
+    for col_idx in range(1, len(headers) + 1):
+        max_len = 12
+        for cell in ws[get_column_letter(col_idx)]:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 2
+
+    wb.save(file_path)
 

@@ -45,9 +45,9 @@ py --version
 
 Once Python is installed, run these commands:
 
-````powershell
+```powershell
 # Navigate to project directory
-cd "E:python run_server.py\task scheduler"
+cd E:\task_scheduler
 
 # Create virtual environment
 python -m venv .venv
@@ -65,34 +65,66 @@ python -m pip install --upgrade pip
 # Install dependencies
 pip install -r requirements.txt
 
-# Initialize database
+# (Optional) Initialize sample data into DB (uses current DATABASE_URL)
 python init_db.py
 
 # Start backend server
-
-```pyhton run_server.py
+python run_server.py
+```
 
 The backend will be available at:
+
 - **API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
+
+## Postgres Setup (Recommended)
+
+1. Create database (example uses default user "postgres")
+
+```powershell
+psql -U postgres -c "CREATE DATABASE iss_task_schedule;"
+```
+
+2. Configure environment
+
+Create a file named `.env` in the project root with:
+
+```
+DATABASE_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/iss_task_schedule
+SECRET_KEY=change-me-to-a-long-random-secret
+```
+
+3. Run
+
+```powershell
+python run_server.py
+```
+
+The server loads `.env` automatically and connects to Postgres. Tables are auto-created on startup.
 
 ## Troubleshooting
 
 **"Python was not found"**
+
 - Python is not installed or not in PATH
 - Reinstall Python and check "Add to PATH"
 - Restart PowerShell after installation
 
 **"Activate.ps1 cannot be loaded"**
+
 - Run: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
 - Then try activation again
 
 **"Module not found" errors**
+
 - Make sure virtual environment is activated (you'll see `(.venv)` in prompt)
 - Run: `pip install -r requirements.txt` again
 
 **Port 8000 already in use**
+
 - Change port in `run_server.py`: `port=8001`
 - Or stop the process using port 8000
 
-````
+```
+
+```

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { listTaskTypes, createTaskType, deleteTaskType } from '../services/api';
+import { listTaskTypes, createTaskType, deleteTaskType, updateTaskType } from '../services/api';
 
 export default function TaskTypes() {
   const [items, setItems] = useState([]);
@@ -42,6 +42,36 @@ export default function TaskTypes() {
   };
 
   const remove = async (id) => { await deleteTaskType(id); load(); };
+  const edit = async (item) => {
+    setForm({
+      name: item.name,
+      recurrence: item.recurrence,
+      required_count: item.required_count,
+      role_labels: (item.role_labels || []).join(','),
+      rules_json: JSON.stringify(item.rules_json || {}),
+      shifts: item.shifts?.map(s => ({ label: s.label, start_time: s.start_time, end_time: s.end_time, required_count: s.required_count })) || []
+    });
+    // Use update on submit for this edit
+    const originalSave = save;
+    // override once
+    // eslint-disable-next-line no-func-assign
+    save = async (e) => {
+      e.preventDefault();
+      const payload = {
+        name: form.name,
+        recurrence: form.recurrence,
+        required_count: Number(form.required_count),
+        role_labels: form.role_labels ? form.role_labels.split(',').map(s => s.trim()) : [],
+        rules_json: JSON.parse(form.rules_json || '{}'),
+        shifts: form.shifts.map(s => ({ ...s, required_count: Number(s.required_count) }))
+      };
+      await updateTaskType(item.id, payload);
+      setForm({ name: '', recurrence: 'daily', required_count: 1, role_labels: '', rules_json: '{}', shifts: [{ label: 'Shift', start_time: '09:00', end_time: '17:00', required_count: 1 }] });
+      // eslint-disable-next-line no-func-assign
+      save = originalSave;
+      load();
+    };
+  };
 
   if (loading) return <div className="text-center py-12">Loading...</div>;
 
@@ -109,7 +139,10 @@ export default function TaskTypes() {
                     <div className="font-medium">{item.name} <span className="text-gray-400 text-sm">({item.recurrence})</span></div>
                     <div className="text-sm text-gray-500">Roles: {item.role_labels?.join(', ') || '-'}</div>
                   </div>
-                  <button className="text-red-600" onClick={()=>remove(item.id)}>Delete</button>
+                  <div className="space-x-3">
+                    <button className="text-indigo-600" onClick={()=>edit(item)}>Edit</button>
+                    <button className="text-red-600" onClick={()=>remove(item.id)}>Delete</button>
+                  </div>
                 </div>
                 {item.shifts?.length>0 && (
                   <div className="mt-2 text-sm">

@@ -1,0 +1,51 @@
+
+#########################
+# first time running    #
+#########################
+ 
+Backend run steps (Windows PowerShell)
+
+cd E:\task_scheduler
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python run_server.py
+API: http://localhost:8000
+Docs: http://localhost:8000/docs
+
+
+Frontend (Vite dev server)
+
+cd E:\task_scheduler\frontend
+npm install
+npm run dev
+Opens at http://localhost:5173
+
+#########################
+# second time running   #
+#########################
+
+. .\.venv\Scripts\Activate.ps1
+python run_server.p
+
+
+Do this:
+One-time setup (run once):
+.\install.ps1
+Daily run (no reinstall):
+.\run.ps1
+
+This activates the existing venv and starts the server. You can pass a port: .\run.ps1 -Port 8001
+
+If you prefer manual commands:
+First time:
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+
+Next times (no reinstall):
+. .\.venv\Scripts\Activate.ps1
+python run_server.py
+Only re-run pip install if requirements.txt changed.

@@ -9,6 +9,15 @@ const api = axios.create({
   },
 });
 
+// Attach token if present
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Team Members
 export const getTeamMembers = () => api.get('/team-members');
 export const createTeamMember = (member) => api.post('/team-members', member);
@@ -27,6 +36,7 @@ export const getSchedule = (scheduleId) => api.get(`/schedules/${scheduleId}`);
 export const exportScheduleCSV = (scheduleId) => api.get(`/schedules/${scheduleId}/export/csv`, { responseType: 'blob' });
 export const exportScheduleExcel = (scheduleId) => api.get(`/schedules/${scheduleId}/export/excel`, { responseType: 'blob' });
 export const exportSchedulePDF = (scheduleId) => api.get(`/schedules/${scheduleId}/export/pdf`, { responseType: 'blob' });
+export const exportScheduleXLSX = (scheduleId) => api.get(`/schedules/${scheduleId}/export/xlsx`, { responseType: 'blob' });
 export const deleteSchedule = (scheduleId) => api.delete(`/schedules/${scheduleId}`);
 
 // Fairness
@@ -38,6 +48,7 @@ export const getConfig = () => api.get('/config');
 // Task Types
 export const listTaskTypes = () => api.get('/task-types');
 export const createTaskType = (payload) => api.post('/task-types', payload);
+export const updateTaskType = (id, payload) => api.put(`/task-types/${id}`, payload);
 export const deleteTaskType = (id) => api.delete(`/task-types/${id}`);
 
 // Swaps
@@ -46,6 +57,11 @@ export const decideSwap = (swapId, approve) => api.post(`/swaps/${swapId}/decisi
 
 // Assignments
 export const updateAssignment = (assignmentId, memberId) => api.patch(`/assignments/${assignmentId}`, { member_id: memberId });
+
+// Auth
+export const authLogin = (username, password) => api.post('/auth/login', new URLSearchParams({ username, password }));
+export const authRegister = (payload) => api.post('/auth/register', payload);
+export const getMe = () => api.get('/me');
 
 export default api;
 

@@ -30,7 +30,8 @@ export default function ConflictSwapManager() {
 
   return (
     <div className="px-4 py-6 max-w-5xl mx-auto">
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">Conflict & Swap Manager</h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-2">Conflict & Swap Manager</h2>
+      <p className="text-sm text-gray-600 mb-4">Suggest a replacement for an assignment you cannot cover. Your request will be reviewed by an admin.</p>
       <div className="bg-white rounded shadow p-4 mb-4">
         <div className="flex space-x-3 items-end">
           <div>
@@ -58,11 +59,11 @@ export default function ConflictSwapManager() {
                       <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                   </select>
-                  <input id={`reason_${a.id}`} className="border px-2 py-1 rounded" placeholder="Reason" />
+                  <input id={`reason_${a.id}`} className="border px-2 py-1 rounded" placeholder="Reason (optional)" />
                   <button
                     onClick={() => submitSwap(a.id, a.member_id, document.getElementById(`proposed_${a.id}`).value, document.getElementById(`reason_${a.id}`).value)}
                     className="px-3 py-1 bg-yellow-500 text-white rounded"
-                  >Propose Swap</button>
+                  >Submit Request</button>
                 </div>
               </div>
             ))}

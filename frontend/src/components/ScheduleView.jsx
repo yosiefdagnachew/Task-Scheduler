@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Download, ArrowLeft, Trash2 } from 'lucide-react';
-import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, updateAssignment, getTeamMembers, deleteSchedule } from '../services/api';
+import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, exportScheduleXLSX, updateAssignment, getTeamMembers, deleteSchedule } from '../services/api';
 import { format, eachDayOfInterval, parseISO } from 'date-fns';
 
 const TASK_COLORS = {
@@ -143,6 +143,20 @@ export default function ScheduleView() {
             CSV
           </button>
           <button onClick={handleExportExcel} className="px-3 py-2 border border-gray-300 rounded-md">Excel</button>
+          <button
+            onClick={async ()=>{
+              try {
+                const res = await exportScheduleXLSX(id);
+                const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `schedule_${id}.xlsx`;
+                document.body.appendChild(a); a.click();
+                window.URL.revokeObjectURL(url); document.body.removeChild(a);
+              } catch (e) { alert('Failed to export XLSX'); }
+            }}
+            className="px-3 py-2 border border-gray-300 rounded-md"
+          >XLSX</button>
           <button onClick={handleExportPDF} className="px-3 py-2 border border-gray-300 rounded-md">PDF</button>
         </div>
       </div>

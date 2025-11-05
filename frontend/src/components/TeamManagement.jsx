@@ -68,15 +68,9 @@ export default function TeamManagement() {
     }
   };
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const handleDelete = async (memberId) => {
-    if (!confirm('Are you sure you want to delete this team member?')) return;
-    try {
-      await deleteTeamMember(memberId);
-      loadMembers();
-    } catch (error) {
-      console.error('Error deleting member:', error);
-      alert('Failed to delete team member');
-    }
+    setConfirmDeleteId(memberId);
   };
 
   const handleAddUnavailable = async (e) => {
@@ -343,6 +337,22 @@ export default function TeamManagement() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Delete Modal */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+          <div className="relative card w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4">Delete Team Member</h3>
+            <p className="text-sm text-gray-700 mb-6">Are you sure you want to delete this member? This action cannot be undone.</p>
+            <div className="flex justify-end space-x-3">
+              <button className="btn-secondary" onClick={()=>setConfirmDeleteId(null)}>Cancel</button>
+              <button className="btn-danger" onClick={async()=>{
+                try { await deleteTeamMember(confirmDeleteId); setConfirmDeleteId(null); loadMembers(); } catch(e){ alert('Failed to delete'); }
+              }}>Delete</button>
+            </div>
           </div>
         </div>
       )}

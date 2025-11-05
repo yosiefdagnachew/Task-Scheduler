@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Calendar, Users, BarChart3 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
@@ -8,9 +8,25 @@ import ScheduleView from './components/ScheduleView';
 import FairnessView from './components/FairnessView';
 import TaskTypes from './components/TaskTypes';
 import ConflictSwapManager from './components/ConflictSwapManager';
+import Login from './components/Login';
+import { getMe } from './services/api';
 
 function Navigation() {
   const location = useLocation();
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'auto');
+  const [me, setMe] = useState(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const enableDark = theme === 'dark' || (theme === 'auto' && prefersDark);
+    root.classList.toggle('dark', !!enableDark);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    getMe().then(res => setMe(res.data)).catch(() => setMe(null));
+  }, [location.pathname]);
   
   const isActive = (path) => {
     return location.pathname === path || location.pathname.startsWith(path + '/');
@@ -69,6 +85,18 @@ function Navigation() {
               </Link>
             </div>
           </div>
+          <div className="flex items-center space-x-3">
+            <select value={theme} onChange={e=>setTheme(e.target.value)} className="border px-2 py-1 rounded text-sm">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="auto">Auto</option>
+            </select>
+            {me ? (
+              <span className="text-sm text-gray-600">{me.username} ({me.role})</span>
+            ) : (
+              <Link to="/login" className="nav-link">Login</Link>
+            )}
+          </div>
         </div>
       </div>
     </nav>
@@ -91,6 +119,7 @@ function App() {
             <Route path="/fairness" element={<FairnessView />} />
             <Route path="/task-types" element={<TaskTypes />} />
             <Route path="/conflicts" element={<ConflictSwapManager />} />
+            <Route path="/login" element={<Login />} />
           </Routes>
         </main>
       </div>
