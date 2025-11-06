@@ -22,7 +22,8 @@ export default function TeamManagement() {
   const [formData, setFormData] = useState({
     name: '',
     id: '',
-    office_days: [0, 1, 2, 3, 4]
+    office_days: [0, 1, 2, 3, 4],
+    email: ''
   });
   const [unavailableForm, setUnavailableForm] = useState({
     start_date: '',
@@ -60,7 +61,7 @@ export default function TeamManagement() {
       }
       setShowModal(false);
       setSelectedMember(null);
-      setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4] });
+      setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4], email: '' });
       loadMembers();
     } catch (error) {
       console.error('Error saving member:', error);
@@ -122,7 +123,7 @@ export default function TeamManagement() {
         <button
           onClick={() => {
             setSelectedMember(null);
-            setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4] });
+            setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4], email: '' });
             setShowModal(true);
           }}
           className="btn-primary inline-flex items-center"
@@ -185,7 +186,8 @@ export default function TeamManagement() {
                     setFormData({
                       name: member.name,
                       id: member.id,
-                      office_days: member.office_days
+                      office_days: member.office_days,
+                      email: member.email || ''
                     });
                     setShowModal(true);
                   }}
@@ -233,6 +235,16 @@ export default function TeamManagement() {
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="input-field"
                   placeholder="Enter member name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Email (for credentials)</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  className="input-field"
+                  placeholder="name@example.com"
                 />
               </div>
               <div>

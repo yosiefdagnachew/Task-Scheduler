@@ -20,6 +20,9 @@ from .loader import load_team
 from jose import jwt, JWTError
 import os
 from passlib.context import CryptContext
+import smtplib
+from email.message import EmailMessage
+import secrets
 
 app = FastAPI(title="Task Scheduler API", version="1.0.0")
 # Auth helpers
@@ -50,6 +53,7 @@ class RegisterPayload(BaseModel):
     password: str
     role: Optional[str] = "member"
     member_id: Optional[str] = None
+    must_change_password: Optional[bool] = False
 
 
 # CORS middleware for frontend
@@ -66,6 +70,7 @@ class TeamMemberCreate(BaseModel):
     name: str
     id: str
     office_days: List[int] = Field(default=[0, 1, 2, 3, 4])
+    email: Optional[str] = None
     
 class TeamMemberResponse(BaseModel):
     id: str
@@ -142,6 +147,31 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
         raise HTTPException(status_code=403, detail="Admin only")
     return user
 
+def _generate_password(length: int = 10) -> str:
+    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+def _send_email(to_email: str, subject: str, body: str):
+    # Primary SMTP_* envs; fallbacks support common naming like EMAIL_USERNAME
+    user = os.getenv("SMTP_USER") or os.getenv("EMAIL_USERNAME")
+    password = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("EMAIL_APP_PASSWORD")
+    host = os.getenv("SMTP_HOST") or ("smtp.gmail.com" if user and user.endswith("@gmail.com") else None)
+    port = int(os.getenv("SMTP_PORT", "0") or (587 if host == "smtp.gmail.com" else 0))
+    from_email = os.getenv("FROM_EMAIL") or os.getenv("EMAIL_FROM") or user or "noreply@example.com"
+    use_tls = (os.getenv("USE_TLS", "true").lower() == "true")
+    if not host or not port or not user or not password:
+        return  # SMTP not configured; skip
+    msg = EmailMessage()
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body)
+    with smtplib.SMTP(host, port, timeout=10) as server:
+        if use_tls:
+            server.starttls()
+        server.login(user, password)
+        server.send_message(msg)
+
 # Helper functions
 def db_member_to_model(db_member: TeamMemberDB, session: Session) -> TeamMember:
     """Convert database member to model."""
@@ -179,7 +209,7 @@ async def register(payload: RegisterPayload, session: Session = Depends(get_db))
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
     password_hash = get_password_hash(payload.password)
-    user = User(username=payload.username, password_hash=password_hash, role=payload.role or "member", member_id=payload.member_id)
+    user = User(username=payload.username, password_hash=password_hash, role=payload.role or "member", member_id=payload.member_id, must_change_password=bool(payload.must_change_password))
     session.add(user)
     session.commit()
     return {"message": "Registered"}
@@ -194,7 +224,22 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Sessi
 
 @app.get("/api/me")
 async def me(current: User = Depends(get_current_user)):
-    return {"username": current.username, "role": current.role, "member_id": current.member_id}
+    return {"username": current.username, "role": current.role, "member_id": current.member_id, "must_change_password": current.must_change_password}
+
+class ChangePasswordPayload(BaseModel):
+    current_password: Optional[str] = None
+    new_password: str
+
+@app.post("/api/auth/change-password")
+async def change_password(payload: ChangePasswordPayload, current: User = Depends(get_current_user), session: Session = Depends(get_db)):
+    # If current.must_change_password, allow without current_password; otherwise require it
+    if not current.must_change_password:
+        if not payload.current_password or not verify_password(payload.current_password, current.password_hash):
+            raise HTTPException(status_code=400, detail="Current password incorrect")
+    current.password_hash = get_password_hash(payload.new_password)
+    current.must_change_password = False
+    session.commit()
+    return {"message": "Password changed"}
 
 # Team Members
 @app.get("/api/team-members", response_model=List[TeamMemberResponse])
@@ -235,6 +280,51 @@ async def create_team_member(member: TeamMemberCreate, session: Session = Depend
     session.add(db_member)
     session.commit()
     session.refresh(db_member)
+
+    # Auto-create user account for this member with random password
+    gen_password = _generate_password()
+    password_hash = get_password_hash(gen_password)
+    if not session.query(User).filter(User.username == member.id).first():
+        user_row = User(username=member.id, password_hash=password_hash, role="member", member_id=member.id, must_change_password=True)
+        session.add(user_row)
+        session.commit()
+        # Send welcome email if possible
+        if member.email:
+            try:
+                _send_email(
+                    to_email=member.email,
+                    subject="Your Task Scheduler account",
+                    body=(
+                        f"Hello {member.name},\n\n"
+                        f"An account has been created for you.\n"
+                        f"Username: {member.id}\nPassword: {gen_password}\n\n"
+                        f"Login at {os.getenv('FRONTEND_URL', 'http://localhost:3000')}/login and change your password afterwards.\n"
+                    ),
+                )
+            except Exception:
+                # ignore email failures
+                pass
+
+@app.post("/api/team-members/{member_id}/resend-credentials")
+async def resend_credentials(member_id: str, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    user_row = session.query(User).filter(User.username == member_id).first()
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_pass = _generate_password()
+    user_row.password_hash = get_password_hash(new_pass)
+    user_row.must_change_password = True
+    session.commit()
+    # send email if possible - need member email; if not present, do nothing
+    try:
+        # If we had email stored, member.email; team member response may not include email; skip if absent
+        # Assuming we didn't persist email field; only send if admin provides email via UI (future enhancement)
+        pass
+    except Exception:
+        pass
+    return {"message": "Credentials reset", "temp_password": new_pass}
     
     return {
         "id": db_member.id,

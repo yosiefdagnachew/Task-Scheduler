@@ -173,6 +173,7 @@ class User(Base):
     role = Column(String, default="member")  # member, admin (extensible)
     created_at = Column(DateTime, default=datetime.now)
     member_id = Column(String, ForeignKey("team_members.id"), nullable=True)
+    must_change_password = Column(Boolean, default=False)
 
 class Database:
     """Database connection and session management."""
@@ -191,6 +192,12 @@ class Database:
     def create_tables(self):
         """Create all database tables."""
         Base.metadata.create_all(bind=self.engine)
+        # Best-effort ensure new columns exist (esp. for existing DBs without alembic)
+        with self.engine.connect() as conn:
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0")
+            except Exception:
+                pass
     
     def get_session(self):
         """Get a database session."""
