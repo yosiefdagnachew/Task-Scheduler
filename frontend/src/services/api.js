@@ -59,7 +59,12 @@ export const decideSwap = (swapId, approve) => api.post(`/swaps/${swapId}/decisi
 export const updateAssignment = (assignmentId, memberId) => api.patch(`/assignments/${assignmentId}`, { member_id: memberId });
 
 // Auth
-export const authLogin = (username, password) => api.post('/auth/login', new URLSearchParams({ username, password }));
+export const authLogin = (username, password) =>
+  api.post(
+    '/auth/login',
+    new URLSearchParams({ username, password }),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
 export const authRegister = (payload) => api.post('/auth/register', payload);
 export const getMe = () => api.get('/me');
 

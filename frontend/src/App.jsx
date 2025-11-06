@@ -32,6 +32,9 @@ function Navigation() {
     return location.pathname === path || location.pathname.startsWith(path + '/');
   };
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  const onLoginPage = location.pathname === '/login' && !token;
+
   return (
     <nav className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm shadow-lg border-b border-gray-200 dark:border-gray-700 sticky top-0 z-50 text-gray-900 dark:text-gray-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -42,6 +45,7 @@ function Navigation() {
                 📅 Task Scheduler
               </Link>
             </div>
+            {!onLoginPage && (
             <div className="hidden sm:ml-8 sm:flex sm:space-x-2">
               <Link
                 to="/"
@@ -84,6 +88,7 @@ function Navigation() {
                 🔄 Swaps
               </Link>
             </div>
+            )}
           </div>
           <div className="flex items-center space-x-3">
             <select value={theme} onChange={e=>setTheme(e.target.value)} className="border px-2 py-1 rounded text-sm">
@@ -91,7 +96,7 @@ function Navigation() {
               <option value="dark">Dark</option>
               <option value="auto">Auto</option>
             </select>
-            {me ? (
+            {!onLoginPage && me ? (
               <span className="text-sm text-gray-600">{me.username} ({me.role})</span>
             ) : (
               <Link to="/login" className="nav-link">Login</Link>
