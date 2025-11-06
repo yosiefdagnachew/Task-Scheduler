@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { Calendar, Users, BarChart3 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import TeamManagement from './components/TeamManagement';
@@ -33,7 +33,7 @@ function Navigation() {
   };
 
   return (
-    <nav className="bg-white/95 backdrop-blur-sm shadow-lg border-b border-gray-200 sticky top-0 z-50">
+    <nav className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm shadow-lg border-b border-gray-200 dark:border-gray-700 sticky top-0 z-50 text-gray-900 dark:text-gray-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex">
@@ -106,20 +106,20 @@ function Navigation() {
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 dark:text-gray-100">
         <Navigation />
 
         {/* Main Content */}
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/team" element={<TeamManagement />} />
-            <Route path="/schedule/generate" element={<ScheduleGenerator />} />
-            <Route path="/schedule/:id" element={<ScheduleView />} />
-            <Route path="/fairness" element={<FairnessView />} />
-            <Route path="/task-types" element={<TaskTypes />} />
-            <Route path="/conflicts" element={<ConflictSwapManager />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
+            <Route path="/team" element={<RequireAuth><TeamManagement /></RequireAuth>} />
+            <Route path="/schedule/generate" element={<RequireAuth><ScheduleGenerator /></RequireAuth>} />
+            <Route path="/schedule/:id" element={<RequireAuth><ScheduleView /></RequireAuth>} />
+            <Route path="/fairness" element={<RequireAuth><FairnessView /></RequireAuth>} />
+            <Route path="/task-types" element={<RequireAuth><TaskTypes /></RequireAuth>} />
+            <Route path="/conflicts" element={<RequireAuth><ConflictSwapManager /></RequireAuth>} />
           </Routes>
         </main>
       </div>
@@ -129,3 +129,10 @@ function App() {
 
 export default App;
 
+function RequireAuth({ children }) {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
