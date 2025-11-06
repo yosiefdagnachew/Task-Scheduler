@@ -178,7 +178,12 @@ class Database:
     """Database connection and session management."""
     
     def __init__(self, database_url: str | None = None):
-        url = database_url or os.getenv("DATABASE_URL", "sqlite:///./task_scheduler.db")
+        url = database_url or os.getenv("DATABASE_URL")
+        if not url:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Please create a .env with your Postgres URL, e.g. "
+                "DATABASE_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/iss_task_schedule"
+            )
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         self.engine = create_engine(url, connect_args=connect_args)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
