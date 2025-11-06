@@ -67,6 +67,7 @@ export const authLogin = (username, password) =>
   );
 export const authRegister = (payload) => api.post('/auth/register', payload);
 export const getMe = () => api.get('/me');
+export const changePassword = (payload) => api.post('/auth/change-password', payload);
 
 export default api;
 

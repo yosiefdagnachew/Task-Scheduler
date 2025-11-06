@@ -193,11 +193,24 @@ class Database:
         """Create all database tables."""
         Base.metadata.create_all(bind=self.engine)
         # Best-effort ensure new columns exist (esp. for existing DBs without alembic)
-        with self.engine.connect() as conn:
-            try:
-                conn.execute("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0")
-            except Exception:
-                pass
+        try:
+            dialect = self.engine.dialect.name
+            with self.engine.connect() as conn:
+                if dialect == "postgresql":
+                    conn.execute(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false"
+                    )
+                elif dialect == "sqlite":
+                    # SQLite: adding with default is fine; ignore error if exists
+                    try:
+                        conn.execute(
+                            "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            # Never block startup on best-effort migration
+            pass
     
     def get_session(self):
         """Get a database session."""

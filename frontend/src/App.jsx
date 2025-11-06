@@ -10,6 +10,7 @@ import TaskTypes from './components/TaskTypes';
 import ConflictSwapManager from './components/ConflictSwapManager';
 import Login from './components/Login';
 import { getMe } from './services/api';
+import ChangePassword from './components/ChangePassword';
 
 function Navigation() {
   const location = useLocation();
@@ -144,6 +145,7 @@ function App() {
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/change-password" element={<RequireAuth><ChangePassword /></RequireAuth>} />
             <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/team" element={<RequireAuth><TeamManagement /></RequireAuth>} />
             <Route path="/schedule/generate" element={<RequireAuth><ScheduleGenerator /></RequireAuth>} />
