@@ -195,15 +195,16 @@ class Database:
         # Best-effort ensure new columns exist (esp. for existing DBs without alembic)
         try:
             dialect = self.engine.dialect.name
-            with self.engine.connect() as conn:
+            # Use transactional DDL to ensure commit on Postgres
+            with self.engine.begin() as conn:
                 if dialect == "postgresql":
-                    conn.execute(
-                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false"
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false"
                     )
                 elif dialect == "sqlite":
                     # SQLite: adding with default is fine; ignore error if exists
                     try:
-                        conn.execute(
+                        conn.exec_driver_sql(
                             "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"
                         )
                     except Exception:
