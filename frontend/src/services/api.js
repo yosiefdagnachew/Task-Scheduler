@@ -21,10 +21,10 @@ api.interceptors.request.use((config) => {
 // Team Members
 export const getTeamMembers = () => api.get('/team-members');
 export const createTeamMember = (member) => api.post('/team-members', member);
-export const updateTeamMember = (memberId, member) => api.put(`/team-members/${memberId}`, member);
-export const deleteTeamMember = (memberId) => api.delete(`/team-members/${memberId}`);
-export const changeMemberId = (memberId, newId) => api.patch(`/team-members/${memberId}/id`, { new_id: newId });
-export const resendCredentials = (memberId) => api.post(`/team-members/${memberId}/resend-credentials`);
+export const updateTeamMember = (memberId, member) => api.put(`/team-members/${encodeURIComponent(memberId)}`, member);
+export const deleteTeamMember = (memberId) => api.delete(`/team-members/${encodeURIComponent(memberId)}`);
+export const changeMemberId = (memberId, newId) => api.patch(`/team-members/${encodeURIComponent(memberId)}/id`, { new_id: newId });
+export const resendCredentials = (memberId) => api.post(`/team-members/${encodeURIComponent(memberId)}/resend-credentials`);
 
 // Unavailable Periods
 export const createUnavailablePeriod = (period) => api.post('/unavailable-periods', period);

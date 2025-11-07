@@ -310,6 +310,14 @@ async def create_team_member(member: TeamMemberCreate, session: Session = Depend
                 # ignore email failures
                 pass
 
+    return {
+        "id": db_member.id,
+        "name": db_member.name,
+        "email": db_member.email,
+        "office_days": list(db_member.office_days),
+        "unavailable_periods": []
+    }
+
 
 def _serialize_swap(swap: SwapRequest) -> dict:
     assignment = swap.assignment
@@ -332,7 +340,7 @@ def _serialize_swap(swap: SwapRequest) -> dict:
         "peer_decided_at": swap.peer_decided_at.isoformat() if swap.peer_decided_at else None,
     }
 
-@app.post("/api/team-members/{member_id}/resend-credentials")
+@app.post("/api/team-members/{member_id:path}/resend-credentials")
 async def resend_credentials(member_id: str, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
     if not member:
@@ -362,7 +370,7 @@ async def resend_credentials(member_id: str, session: Session = Depends(get_db),
             email_sent = False
     return {"message": "Credentials reset", "temp_password": new_pass, "email_sent": email_sent}
 
-@app.put("/api/team-members/{member_id}", response_model=TeamMemberResponse)
+@app.put("/api/team-members/{member_id:path}", response_model=TeamMemberResponse)
 async def update_team_member(member_id: str, member: TeamMemberCreate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Update a team member."""
     db_member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
@@ -394,7 +402,7 @@ async def update_team_member(member_id: str, member: TeamMemberCreate, session: 
         "unavailable_periods": periods
     }
 
-@app.patch("/api/team-members/{member_id}/id")
+@app.patch("/api/team-members/{member_id:path}/id")
 async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Change a member's ID and cascade to related tables."""
     if not payload.new_id:
@@ -421,13 +429,34 @@ async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Ses
     session.commit()
     return {"message": "Member ID updated", "id": payload.new_id}
 
-@app.delete("/api/team-members/{member_id}")
+@app.delete("/api/team-members/{member_id:path}")
 async def delete_team_member(member_id: str, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Delete a team member."""
+    """Delete a team member and all related records."""
     db_member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
     if not db_member:
         raise HTTPException(status_code=404, detail="Member not found")
     
+    # Delete related records first to avoid foreign key violations
+    # Delete swap requests where this member is involved
+    session.query(SwapRequest).filter(
+        (SwapRequest.requested_by == member_id) | (SwapRequest.proposed_member_id == member_id)
+    ).delete(synchronize_session=False)
+    
+    # Delete assignments for this member
+    session.query(AssignmentDB).filter(AssignmentDB.member_id == member_id).delete(synchronize_session=False)
+    
+    # Delete unavailable periods
+    session.query(UnavailablePeriod).filter(UnavailablePeriod.member_id == member_id).delete(synchronize_session=False)
+    
+    # Delete fairness counts
+    session.query(FairnessCount).filter(FairnessCount.member_id == member_id).delete(synchronize_session=False)
+    
+    # Delete user account if exists
+    user_row = session.query(User).filter(User.member_id == member_id).first()
+    if user_row:
+        session.delete(user_row)
+    
+    # Finally delete the team member
     session.delete(db_member)
     session.commit()
     return {"message": "Member deleted successfully"}
@@ -601,6 +630,14 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
         AssignmentDB.assignment_date >= schedule.start_date,
         AssignmentDB.assignment_date <= schedule.end_date
     ).all()
+    
+    assignment_ids = [a.id for a in assignments]
+
+    # Delete swap requests that reference these assignments first (to avoid foreign key violation)
+    if assignment_ids:
+        session.query(SwapRequest).filter(
+            SwapRequest.assignment_id.in_(assignment_ids)
+        ).delete(synchronize_session=False)
 
     # Decrement fairness counts for these assignments if rows exist
     for a in assignments:
@@ -613,13 +650,13 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
             fc.updated_at = date.today()
 
     # Delete assignments
-    session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
-    ).delete(synchronize_session=False)
+    if assignment_ids:
+        session.query(AssignmentDB).filter(
+            AssignmentDB.id.in_(assignment_ids)
+        ).delete(synchronize_session=False)
 
     # Delete schedule
-    session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).delete()
+    session.delete(schedule)
     session.commit()
     return {"message": "Schedule deleted"}
 
