@@ -170,14 +170,21 @@ class Scheduler:
             week_dates = [week_start + timedelta(days=i) for i in range(6)]
             
             # Find eligible members (must be in office for all days of the week)
+            # Relaxed: allow members who have some ATM assignments but not on all days
             eligible_members = []
             for member in members:
-                # Check if member is available for all days in the week and not resting (per-member)
+                # Check if member is available for all days in the week
                 rest_set = member_rest_days.get(member.id, set())
+                atm_days_for_member = {d for d in week_dates if member.id in atm_by_date.get(d, set())}
+                
+                # Member must be available on all week days (Mon-Sat)
                 is_available_all_week = all(
-                    member.is_available_on(d) and (d not in rest_set) and member.id not in atm_by_date.get(d, set())
+                    member.is_available_on(d) and (d not in rest_set)
                     for d in week_dates
                 )
+                
+                # Allow members even if they have some ATM assignments, as long as they're available
+                # The constraint is: they must be available (not resting, not unavailable) on all week days
                 if is_available_all_week:
                     eligible_members.append(member)
             
@@ -230,12 +237,27 @@ class Scheduler:
         eligible = []
         
         for member in members:
-            # Must be available on the date
-            if not member.is_available_on(check_date):
-                continue
+            # For ATM tasks, check availability but allow Sunday even if not in office_days
+            # (ATM monitoring is 24/7, so we bypass office_days check for ATM)
+            if task_type in {TaskType.ATM_MORNING, TaskType.ATM_MIDNIGHT}:
+                # Check unavailable dates/ranges, but allow Sunday even if not in office_days
+                if check_date in member.unavailable_dates:
+                    continue
+                # Check if date falls in any unavailable range
+                is_in_unavailable_range = any(
+                    start <= check_date <= end
+                    for start, end in member.unavailable_ranges
+                )
+                if is_in_unavailable_range:
+                    continue
+                # For ATM, we allow any day (including Sunday) unless explicitly unavailable
+            else:
+                # For SysAid, use normal availability check (must be in office_days)
+                if not member.is_available_on(check_date):
+                    continue
 
             # If rest rule applies: a member who did ATM_MIDNIGHT on D must rest on D+1 for ALL ATM tasks
-            if self.config.atm_rest_rule_enabled:
+            if self.config.atm_rest_rule_enabled and task_type in {TaskType.ATM_MORNING, TaskType.ATM_MIDNIGHT}:
                 had_b_previous_day = any(
                     a.task_type == TaskType.ATM_MIDNIGHT and a.assignee.id == member.id and (check_date - a.date).days == 1
                     for a in existing_assignments
