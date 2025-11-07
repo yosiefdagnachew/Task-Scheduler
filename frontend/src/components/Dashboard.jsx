@@ -3,11 +3,14 @@ import { Link } from 'react-router-dom';
 import { Calendar, Users, Plus, Eye } from 'lucide-react';
 import { getSchedules, getTeamMembers } from '../services/api';
 import { format } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
 
 export default function Dashboard() {
   const [schedules, setSchedules] = useState([]);
   const [teamCount, setTeamCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const { me } = useAuth();
+  const isAdmin = me?.role === 'admin';
 
   useEffect(() => {
     loadData();
@@ -73,17 +76,19 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="card overflow-hidden group hover:scale-105 transition-transform duration-300">
-          <div className="p-6 bg-gradient-to-br from-green-50 to-emerald-50">
-            <Link
-              to="/schedule/generate"
-              className="flex flex-col items-center justify-center h-full min-h-[80px] btn-primary"
-            >
-              <Plus className="w-5 h-5 mb-2" />
-              <span className="font-semibold">Generate Schedule</span>
-            </Link>
+        {isAdmin && (
+          <div className="card overflow-hidden group hover:scale-105 transition-transform duration-300">
+            <div className="p-6 bg-gradient-to-br from-green-50 to-emerald-50">
+              <Link
+                to="/schedule/generate"
+                className="flex flex-col items-center justify-center h-full min-h-[80px] btn-primary"
+              >
+                <Plus className="w-5 h-5 mb-2" />
+                <span className="font-semibold">Generate Schedule</span>
+              </Link>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Recent Schedules */}

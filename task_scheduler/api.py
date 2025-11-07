@@ -76,6 +76,7 @@ class TeamMemberResponse(BaseModel):
     id: str
     name: str
     office_days: List[int]
+    email: Optional[str] = None
     unavailable_periods: List[dict] = []
     
     class Config:
@@ -105,6 +106,7 @@ class AssignmentResponse(BaseModel):
     member_name: str
     assignment_date: date
     week_start: Optional[date] = None
+    shift_label: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -189,7 +191,8 @@ def db_member_to_model(db_member: TeamMemberDB, session: Session) -> TeamMember:
         id=db_member.id,
         office_days=db_member.office_days or {0, 1, 2, 3, 4},
         unavailable_dates=unavailable_dates,
-        unavailable_ranges=unavailable_ranges
+        unavailable_ranges=unavailable_ranges,
+        email=db_member.email
     )
 
 # API Endpoints
@@ -260,6 +263,7 @@ async def get_team_members(session: Session = Depends(get_db), user: User = Depe
         result.append({
             "id": member.id,
             "name": member.name,
+            "email": member.email,
             "office_days": list(member.office_days or []),
             "unavailable_periods": periods
         })
@@ -275,7 +279,8 @@ async def create_team_member(member: TeamMemberCreate, session: Session = Depend
     db_member = TeamMemberDB(
         id=member.id,
         name=member.name,
-        office_days=set(member.office_days)
+        office_days=set(member.office_days),
+        email=member.email
     )
     session.add(db_member)
     session.commit()
@@ -305,6 +310,28 @@ async def create_team_member(member: TeamMemberCreate, session: Session = Depend
                 # ignore email failures
                 pass
 
+
+def _serialize_swap(swap: SwapRequest) -> dict:
+    assignment = swap.assignment
+    requested_member = swap.requested_by_member
+    proposed_member = swap.proposed_member
+    return {
+        "id": swap.id,
+        "assignment_id": swap.assignment_id,
+        "assignment_date": assignment.assignment_date.isoformat() if assignment else None,
+        "task_type": assignment.task_type.value if assignment else None,
+        "requested_by": swap.requested_by,
+        "requested_by_name": requested_member.name if requested_member else None,
+        "proposed_member_id": swap.proposed_member_id,
+        "proposed_member_name": proposed_member.name if proposed_member else None,
+        "status": swap.status,
+        "reason": swap.reason,
+        "created_at": swap.created_at.isoformat() if swap.created_at else None,
+        "decided_at": swap.decided_at.isoformat() if swap.decided_at else None,
+        "peer_decision": swap.peer_decision,
+        "peer_decided_at": swap.peer_decided_at.isoformat() if swap.peer_decided_at else None,
+    }
+
 @app.post("/api/team-members/{member_id}/resend-credentials")
 async def resend_credentials(member_id: str, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     member = session.query(TeamMemberDB).filter(TeamMemberDB.id == member_id).first()
@@ -317,21 +344,23 @@ async def resend_credentials(member_id: str, session: Session = Depends(get_db),
     user_row.password_hash = get_password_hash(new_pass)
     user_row.must_change_password = True
     session.commit()
-    # send email if possible - need member email; if not present, do nothing
-    try:
-        # If we had email stored, member.email; team member response may not include email; skip if absent
-        # Assuming we didn't persist email field; only send if admin provides email via UI (future enhancement)
-        pass
-    except Exception:
-        pass
-    return {"message": "Credentials reset", "temp_password": new_pass}
-    
-    return {
-        "id": db_member.id,
-        "name": db_member.name,
-        "office_days": list(db_member.office_days),
-        "unavailable_periods": []
-    }
+    email_sent = False
+    if member.email:
+        try:
+            _send_email(
+                to_email=member.email,
+                subject="Task Scheduler credentials reset",
+                body=(
+                    f"Hello {member.name},\n\n"
+                    f"Your credentials have been reset.\n"
+                    f"Username: {member.id}\nTemporary password: {new_pass}\n\n"
+                    f"Login at {os.getenv('FRONTEND_URL', 'http://localhost:3000')}/login and change your password afterwards.\n"
+                ),
+            )
+            email_sent = True
+        except Exception:
+            email_sent = False
+    return {"message": "Credentials reset", "temp_password": new_pass, "email_sent": email_sent}
 
 @app.put("/api/team-members/{member_id}", response_model=TeamMemberResponse)
 async def update_team_member(member_id: str, member: TeamMemberCreate, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
@@ -342,6 +371,7 @@ async def update_team_member(member_id: str, member: TeamMemberCreate, session: 
     
     db_member.name = member.name
     db_member.office_days = set(member.office_days)
+    db_member.email = member.email
     db_member.updated_at = date.today()
     session.commit()
     session.refresh(db_member)
@@ -359,6 +389,7 @@ async def update_team_member(member_id: str, member: TeamMemberCreate, session: 
     return {
         "id": db_member.id,
         "name": db_member.name,
+        "email": db_member.email,
         "office_days": list(db_member.office_days),
         "unavailable_periods": periods
     }
@@ -488,7 +519,8 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
             task_type=assignment.task_type,
             member_id=assignment.assignee.id,
             assignment_date=assignment.date,
-            week_start=assignment.week_start
+            week_start=assignment.week_start,
+            shift_label=assignment.shift_label
         )
         session.add(db_assignment)
         # Update fairness ledger
@@ -529,7 +561,8 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
             "member_id": a.member_id,
             "member_name": member.name if member else "Unknown",
             "assignment_date": a.assignment_date,
-            "week_start": a.week_start
+            "week_start": a.week_start,
+            "shift_label": a.shift_label
         })
     
     return {
@@ -611,7 +644,8 @@ async def get_schedule(schedule_id: int, session: Session = Depends(get_db), use
             "member_id": a.member_id,
             "member_name": member.name if member else "Unknown",
             "assignment_date": a.assignment_date.isoformat(),
-            "week_start": a.week_start.isoformat() if a.week_start else None
+            "week_start": a.week_start.isoformat() if a.week_start else None,
+            "shift_label": a.shift_label
         })
     
     return {
@@ -647,7 +681,8 @@ async def export_schedule_csv(schedule_id: int, session: Session = Depends(get_d
                 task_type=a.task_type,
                 assignee=member,
                 date=a.assignment_date,
-                week_start=a.week_start
+                week_start=a.week_start,
+                shift_label=a.shift_label
             )
             schedule_assignments.append(assignment)
     
@@ -687,7 +722,8 @@ async def export_schedule_xlsx(schedule_id: int, session: Session = Depends(get_
                 task_type=a.task_type,
                 assignee=member,
                 date=a.assignment_date,
-                week_start=a.week_start
+                week_start=a.week_start,
+                shift_label=a.shift_label
             )
             schedule_assignments.append(assignment)
 
@@ -867,33 +903,93 @@ async def update_task_type(task_type_id: int, payload: TaskTypeDefUpdate, sessio
 # Swaps
 class SwapRequestCreate(BaseModel):
     assignment_id: int
-    requested_by: str
-    proposed_member_id: Optional[str] = None
+    proposed_member_id: str
     reason: Optional[str] = None
+
+class SwapPeerDecision(BaseModel):
+    accept: bool
+    note: Optional[str] = None
 
 @app.post("/api/swaps")
 async def propose_swap(payload: SwapRequestCreate, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if not user.member_id:
+        raise HTTPException(status_code=403, detail="Only team members can propose swaps")
+
     assignment = session.query(AssignmentDB).filter(AssignmentDB.id == payload.assignment_id).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    
+
+    if assignment.member_id != user.member_id:
+        raise HTTPException(status_code=403, detail="You can only propose swaps for your own assignments")
+
+    if payload.proposed_member_id == user.member_id:
+        raise HTTPException(status_code=400, detail="Cannot swap with yourself")
+
     swap = SwapRequest(
         assignment_id=payload.assignment_id,
-        requested_by=payload.requested_by,
+        requested_by=user.member_id,
         proposed_member_id=payload.proposed_member_id,
         reason=payload.reason,
-        status="pending"
+        status="pending_peer"
     )
     session.add(swap)
     session.commit()
     session.refresh(swap)
     return {"id": swap.id, "status": swap.status}
 
+
+@app.get("/api/swaps")
+async def list_swaps(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    swaps = session.query(SwapRequest).all()
+    outgoing = []
+    incoming = []
+    admin_pending = []
+
+    for swap in swaps:
+        data = _serialize_swap(swap)
+        if user.member_id and swap.requested_by == user.member_id:
+            outgoing.append(data)
+        if user.member_id and swap.proposed_member_id == user.member_id and swap.status == "pending_peer":
+            incoming.append(data)
+        if user.role == "admin" and swap.status == "pending_admin":
+            admin_pending.append(data)
+
+    return {
+        "outgoing": outgoing,
+        "incoming": incoming,
+        "admin_pending": admin_pending
+    }
+
+
+@app.post("/api/swaps/{swap_id}/respond")
+async def respond_swap(swap_id: int, payload: SwapPeerDecision, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if not user.member_id:
+        raise HTTPException(status_code=403, detail="Only team members can respond to swaps")
+    swap = session.query(SwapRequest).filter(SwapRequest.id == swap_id).first()
+    if not swap:
+        raise HTTPException(status_code=404, detail="Swap not found")
+    if swap.proposed_member_id != user.member_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this swap")
+    if swap.status != "pending_peer":
+        raise HTTPException(status_code=400, detail="Swap is not awaiting your response")
+
+    swap.peer_decision = "accepted" if payload.accept else "rejected"
+    swap.peer_decided_at = datetime.now()
+    if payload.accept:
+        swap.status = "pending_admin"
+    else:
+        swap.status = "rejected"
+        swap.decided_at = datetime.now()
+    session.commit()
+    return {"message": "Swap updated", "swap": _serialize_swap(swap)}
+
 @app.post("/api/swaps/{swap_id}/decision")
 async def decide_swap(swap_id: int, approve: bool, session: Session = Depends(get_db), admin: User = Depends(require_admin)):
     swap = session.query(SwapRequest).filter(SwapRequest.id == swap_id).first()
     if not swap:
         raise HTTPException(status_code=404, detail="Swap not found")
+    if swap.status != "pending_admin":
+        raise HTTPException(status_code=400, detail="Swap is not awaiting admin decision")
     swap.status = "approved" if approve else "rejected"
     swap.decided_at = datetime.now()
     
@@ -904,7 +1000,7 @@ async def decide_swap(swap_id: int, approve: bool, session: Session = Depends(ge
             assignment.member_id = swap.proposed_member_id
     
     session.commit()
-    return {"id": swap.id, "status": swap.status}
+    return {"swap": _serialize_swap(swap)}
 
 # Update assignment (manual edit)
 class AssignmentUpdate(BaseModel):

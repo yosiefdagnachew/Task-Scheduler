@@ -5,6 +5,40 @@ from typing import List, Optional, Set, Tuple
 from .models import TeamMember, Assignment, TaskType, Schedule, FairnessLedger
 from .config import SchedulingConfig
 
+ATM_SHIFT_PLAN = {
+    0: [  # Monday
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
+    ],
+    1: [
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
+    ],
+    2: [
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
+    ],
+    3: [
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
+    ],
+    4: [
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
+    ],
+    5: [  # Saturday
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Midday (06:00)", "rest_next_day": True},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Midday (11:00)", "rest_next_day": True},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Night (16:00)", "rest_next_day": True},
+    ],
+    6: [  # Sunday
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MORNING, "label": "Morning (09:00)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Night (16:00)", "rest_next_day": True},
+    ],
+}
+
 
 class AuditLog:
     """Simple audit log for scheduling decisions."""
@@ -56,70 +90,43 @@ class Scheduler:
     ) -> List[Assignment]:
         """Schedule ATM monitoring tasks (daily)."""
         assignments = []
-        
         current_date = start_date
         while current_date <= end_date:
-            
-            # Find eligible members for this date
-            eligible_for_a = self._get_eligible_members(
-                members, current_date, TaskType.ATM_MORNING, assignments
-            )
-            eligible_for_b = self._get_eligible_members(
-                members, current_date, TaskType.ATM_MIDNIGHT, assignments
-            )
-            
-            # Remove members already assigned today
+            weekday = current_date.weekday()
+            shifts = ATM_SHIFT_PLAN.get(weekday, ATM_SHIFT_PLAN[0])
             assigned_today = {a.assignee.id for a in assignments if a.date == current_date}
-            eligible_for_a = [m for m in eligible_for_a if m.id not in assigned_today]
-            eligible_for_b = [m for m in eligible_for_b if m.id not in assigned_today]
-            
-            # Select assignees based on fairness
-            if eligible_for_a and eligible_for_b:
-                assignee_a = self._select_assignee(eligible_for_a, TaskType.ATM_MORNING, current_date)
-                assignee_b = self._select_assignee(eligible_for_b, TaskType.ATM_MIDNIGHT, current_date)
-                
-                # Ensure A and B are different
-                if assignee_a.id == assignee_b.id:
-                    # If only one eligible member, skip this day
-                    if len(eligible_for_a) == 1 and len(eligible_for_b) == 1:
-                        self.audit.log(f"WARNING: {current_date} - Only one eligible member, skipping ATM assignment")
-                        current_date += timedelta(days=1)
-                        continue
-                    # Swap B if needed
-                    eligible_for_b_no_a = [m for m in eligible_for_b if m.id != assignee_a.id]
-                    if eligible_for_b_no_a:
-                        assignee_b = self._select_assignee(eligible_for_b_no_a, TaskType.ATM_MIDNIGHT, current_date)
-                    else:
-                        self.audit.log(f"WARNING: {current_date} - Cannot assign distinct A and B, skipping")
-                        current_date += timedelta(days=1)
-                        continue
-                
+
+            for shift in shifts:
+                task_type = shift["task_type"]
+                label = shift["label"]
+                rest_next_day = shift.get("rest_next_day", False)
+
+                eligible = self._get_eligible_members(members, current_date, task_type, assignments)
+                eligible = [m for m in eligible if m.id not in assigned_today]
+
+                if not eligible:
+                    self.audit.log(f"WARNING: {current_date} - No eligible members for {label} ({task_type.value})")
+                    continue
+
+                assignee = self._select_assignee(eligible, task_type, current_date)
                 assignments.append(Assignment(
-                    task_type=TaskType.ATM_MORNING,
-                    assignee=assignee_a,
-                    date=current_date
+                    task_type=task_type,
+                    assignee=assignee,
+                    date=current_date,
+                    shift_label=label
                 ))
-                assignments.append(Assignment(
-                    task_type=TaskType.ATM_MIDNIGHT,
-                    assignee=assignee_b,
-                    date=current_date
-                ))
-                
-                # Log with rest info
-                if self.config.atm_rest_rule_enabled:
+                assigned_today.add(assignee.id)
+
+                if self.config.atm_rest_rule_enabled and rest_next_day:
                     rest_day = current_date + timedelta(days=1)
-                    self.audit.log(f"{current_date} - Assigned {assignee_a.name} (A) and {assignee_b.name} (B). {assignee_b.name} rests on {rest_day}")
+                    self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}. Rest on {rest_day}")
                 else:
-                    self.audit.log(f"{current_date} - Assigned {assignee_a.name} (A) and {assignee_b.name} (B)")
-                
-                # Update ledger
-                self.ledger.increment(assignee_a.id, TaskType.ATM_MORNING)
-                self.ledger.increment(assignee_b.id, TaskType.ATM_MIDNIGHT)
-            else:
-                self.audit.log(f"WARNING: {current_date} - Insufficient eligible members for ATM assignment")
-            
+                    self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}")
+
+                self.ledger.increment(assignee.id, task_type)
+
             current_date += timedelta(days=1)
-        
+
         return assignments
     
     def _schedule_sysaid(
@@ -137,6 +144,12 @@ class Scheduler:
         for a in b_assignments:
             rd = a.date + timedelta(days=1)
             member_rest_days.setdefault(a.assignee.id, set()).add(rd)
+
+        # Map ATM assignments by date to avoid double-booking with SysAid
+        atm_by_date = {}
+        for a in existing_schedule.assignments:
+            if a.task_type in {TaskType.ATM_MORNING, TaskType.ATM_MIDNIGHT}:
+                atm_by_date.setdefault(a.date, set()).add(a.assignee.id)
         
         # Find week boundaries
         current_date = start_date
@@ -153,8 +166,8 @@ class Scheduler:
                 current_date = week_end + timedelta(days=1)
                 continue
             
-            # Check all days in the week for office presence
-            week_dates = [week_start + timedelta(days=i) for i in range(7)]
+            # Check Monday-Saturday for SysAid (no Sunday coverage)
+            week_dates = [week_start + timedelta(days=i) for i in range(6)]
             
             # Find eligible members (must be in office for all days of the week)
             eligible_members = []
@@ -162,7 +175,7 @@ class Scheduler:
                 # Check if member is available for all days in the week and not resting (per-member)
                 rest_set = member_rest_days.get(member.id, set())
                 is_available_all_week = all(
-                    member.is_available_on(d) and (d not in rest_set)
+                    member.is_available_on(d) and (d not in rest_set) and member.id not in atm_by_date.get(d, set())
                     for d in week_dates
                 )
                 if is_available_all_week:
@@ -185,13 +198,15 @@ class Scheduler:
                         task_type=TaskType.SYSAID_MAKER,
                         assignee=maker,
                         date=week_date,
-                        week_start=week_start
+                        week_start=week_start,
+                        shift_label=f"Maker duty (week of {week_start.isoformat()})"
                     ))
                     assignments.append(Assignment(
                         task_type=TaskType.SYSAID_CHECKER,
                         assignee=checker,
                         date=week_date,
-                        week_start=week_start
+                        week_start=week_start,
+                        shift_label=f"Checker duty (week of {week_start.isoformat()})"
                     ))
             
             self.audit.log(f"Week {week_start} - Assigned {maker.name} (Maker) and {checker.name} (Checker)")

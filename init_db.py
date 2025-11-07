@@ -3,6 +3,9 @@
 from task_scheduler.database import db, TeamMemberDB, UnavailablePeriod
 from datetime import date
 from task_scheduler.loader import load_team
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def init_database():
     """Initialize database with team members from YAML."""

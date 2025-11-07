@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Edit, Trash2, Calendar as CalendarIcon } from 'lucide-react';
+import { Plus, Edit, Trash2, Calendar as CalendarIcon, Mail } from 'lucide-react';
 import {
   getTeamMembers,
   createTeamMember,
@@ -7,9 +7,11 @@ import {
   deleteTeamMember,
   createUnavailablePeriod,
   deleteUnavailablePeriod,
-  changeMemberId
+  changeMemberId,
+  resendCredentials
 } from '../services/api';
 import { format } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -30,10 +32,20 @@ export default function TeamManagement() {
     end_date: '',
     reason: ''
   });
+  const { me } = useAuth();
+  const isAdmin = me?.role === 'admin';
+  const selfId = me?.member_id;
+  const [resendInfo, setResendInfo] = useState(null);
 
   useEffect(() => {
     loadMembers();
   }, []);
+
+  useEffect(() => {
+    if (!resendInfo) return;
+    const timer = setTimeout(() => setResendInfo(null), 6000);
+    return () => clearTimeout(timer);
+  }, [resendInfo]);
 
   const loadMembers = async () => {
     try {
@@ -49,6 +61,7 @@ export default function TeamManagement() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!isAdmin) return;
     try {
       if (selectedMember) {
         // If ID changed, update ID first, then other fields
@@ -100,6 +113,18 @@ export default function TeamManagement() {
     }
   };
 
+  const handleResendCredentials = async (member) => {
+    try {
+      const res = await resendCredentials(member.id);
+      const msg = res.data.email_sent && member.email
+        ? `Credentials emailed to ${member.email}`
+        : `New temporary password for ${member.name}: ${res.data.temp_password}${member.email ? ' (email delivery failed)' : ' (no email on file)'}`;
+      setResendInfo(msg);
+    } catch (error) {
+      alert(error.response?.data?.detail || 'Failed to resend credentials');
+    }
+  };
+
   const toggleOfficeDay = (day) => {
     setFormData(prev => ({
       ...prev,
@@ -119,22 +144,32 @@ export default function TeamManagement() {
         <div>
           <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">Team Management</h2>
           <p className="mt-2 text-sm text-gray-600">Manage team members and their availability</p>
+          {!isAdmin && <p className="mt-1 text-xs text-gray-500">View-only mode: you can add unavailable dates for yourself but cannot edit other members.</p>}
         </div>
-        <button
-          onClick={() => {
-            setSelectedMember(null);
-            setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4], email: '' });
-            setShowModal(true);
-          }}
-          className="btn-primary inline-flex items-center"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Member
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => {
+              setSelectedMember(null);
+              setFormData({ name: '', id: '', office_days: [0, 1, 2, 3, 4], email: '' });
+              setShowModal(true);
+            }}
+            className="btn-primary inline-flex items-center"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Member
+          </button>
+        )}
       </div>
 
+      {resendInfo && (
+        <div className="mb-4 bg-indigo-50 border border-indigo-200 text-indigo-800 px-4 py-3 rounded-lg text-sm">
+          {resendInfo}
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-4">
-        {members.map((member, idx) => (
+        {members.map((member, idx) => {
+          const isSelf = member.id === selfId;
+          return (
           <div key={member.id} className="card p-6 animate-slide-up hover:scale-[1.02] transition-transform duration-300" style={{ animationDelay: `${idx * 0.1}s` }}>
             <div className="flex justify-between items-start">
               <div className="flex-1">
@@ -145,6 +180,7 @@ export default function TeamManagement() {
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">{member.name}</h3>
                     <p className="text-xs text-gray-500 mt-0.5">ID: {member.id}</p>
+                  {member.email && <p className="text-xs text-gray-500">{member.email}</p>}
                   </div>
                 </div>
                 <div className="mt-4">
@@ -167,12 +203,14 @@ export default function TeamManagement() {
                             {format(new Date(period.start_date), 'MMM dd')} - {format(new Date(period.end_date), 'MMM dd, yyyy')}
                             {period.reason && <span className="text-red-600"> ({period.reason})</span>}
                           </span>
-                          <button
-                            onClick={() => handleDeleteUnavailable(period.id)}
-                            className="text-red-600 hover:text-red-800 hover:bg-red-100 p-1 rounded transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {(isAdmin || isSelf) && (
+                            <button
+                              onClick={() => handleDeleteUnavailable(period.id)}
+                              className="text-red-600 hover:text-red-800 hover:bg-red-100 p-1 rounded transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -180,44 +218,60 @@ export default function TeamManagement() {
                 )}
               </div>
               <div className="flex space-x-2 ml-4">
-                <button
-                  onClick={() => {
-                    setSelectedMember(member);
-                    setFormData({
-                      name: member.name,
-                      id: member.id,
-                      office_days: member.office_days,
-                      email: member.email || ''
-                    });
-                    setShowModal(true);
-                  }}
-                  className="p-2 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-all duration-200"
-                  title="Edit"
-                >
-                  <Edit className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedMember(member);
-                    setUnavailableForm({ start_date: '', end_date: '', reason: '' });
-                    setShowUnavailableModal(true);
-                  }}
-                  className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all duration-200"
-                  title="Add Unavailable Period"
-                >
-                  <CalendarIcon className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => handleDelete(member.id)}
-                  className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-200"
-                  title="Delete"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => {
+                      setSelectedMember(member);
+                      setFormData({
+                        name: member.name,
+                        id: member.id,
+                        office_days: member.office_days,
+                        email: member.email || ''
+                      });
+                      setShowModal(true);
+                    }}
+                    className="p-2 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-all duration-200"
+                    title="Edit"
+                  >
+                    <Edit className="w-5 h-5" />
+                  </button>
+                )}
+                {(isAdmin || member.id === selfId) && (
+                  <button
+                    onClick={() => {
+                      setSelectedMember(member);
+                      setUnavailableForm({ start_date: '', end_date: '', reason: '' });
+                      setShowUnavailableModal(true);
+                    }}
+                    className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all duration-200"
+                    title="Add Unavailable Period"
+                  >
+                    <CalendarIcon className="w-5 h-5" />
+                  </button>
+                )}
+                {isAdmin && (
+                  <>
+                    <button
+                      onClick={() => handleResendCredentials(member)}
+                      className={`p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg transition-all duration-200 ${!member.email ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      title="Resend Credentials"
+                      disabled={!member.email}
+                    >
+                      <Mail className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(member.id)}
+                      className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-200"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
-        ))}
+        )})}
       </div>
 
       {/* Member Modal */}

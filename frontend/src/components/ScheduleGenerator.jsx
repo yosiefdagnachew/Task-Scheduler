@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Calendar, Loader } from 'lucide-react';
 import { generateSchedule, listTaskTypes } from '../services/api';
 import { format } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
 
 export default function ScheduleGenerator() {
   const navigate = useNavigate();
@@ -16,6 +17,8 @@ export default function ScheduleGenerator() {
   });
   const [taskTypes, setTaskTypes] = useState([]);
   const [error, setError] = useState(null);
+  const { me } = useAuth();
+  const isAdmin = me?.role === 'admin';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -58,6 +61,17 @@ export default function ScheduleGenerator() {
       end_date: format(nextSunday, 'yyyy-MM-dd')
     }));
   }, []);
+
+  if (!isAdmin) {
+    return (
+      <div className="px-4 py-6">
+        <div className="max-w-2xl mx-auto card p-6">
+          <h2 className="text-2xl font-bold mb-4">Access Restricted</h2>
+          <p className="text-sm text-gray-600">Only administrators can generate schedules. Please contact your administrator for assistance.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 py-6 animate-fade-in">
@@ -196,7 +210,7 @@ export default function ScheduleGenerator() {
           <ul className="text-sm text-blue-800 space-y-2">
             <li className="flex items-start">
               <span className="mr-2">•</span>
-              <span>ATM monitoring: Two people per day (Morning and Mid-day/Night)</span>
+              <span>ATM monitoring: Mon-Fri two shifts (Morning & Mid/Night), Saturday four shifts, Sunday three shifts</span>
             </li>
             <li className="flex items-start">
               <span className="mr-2">•</span>
@@ -204,7 +218,7 @@ export default function ScheduleGenerator() {
             </li>
             <li className="flex items-start">
               <span className="mr-2">•</span>
-              <span>SysAid: Weekly Maker/Checker pair (must be in office all week)</span>
+              <span>SysAid: Weekly Maker/Checker pair (Mon-Sat) with no overlap with ATM rest days</span>
             </li>
             <li className="flex items-start">
               <span className="mr-2">•</span>

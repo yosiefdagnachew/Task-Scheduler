@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { authLogin, getMe } from '../services/api';
+import { authLogin } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { refresh } = useAuth();
 
   const submit = async (e) => {
     e.preventDefault();
@@ -14,14 +16,10 @@ export default function Login() {
     try {
       const res = await authLogin(username, password);
       localStorage.setItem('access_token', res.data.access_token);
-      try {
-        const me = await getMe();
-        if (me.data.must_change_password) {
-          navigate('/change-password');
-        } else {
-          navigate('/');
-        }
-      } catch {
+      const me = await refresh();
+      if (me?.must_change_password) {
+        navigate('/change-password');
+      } else {
         navigate('/');
       }
     } catch (e) {

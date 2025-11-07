@@ -24,10 +24,13 @@ def export_to_csv(schedule: Schedule, file_path: str):
         
         for assignment in sorted_assignments:
             week_start_str = assignment.week_start.isoformat() if assignment.week_start else ""
+            assignee_display = assignment.assignee.name
+            if assignment.shift_label:
+                assignee_display = f"{assignee_display} ({assignment.shift_label})"
             writer.writerow([
                 assignment.date.isoformat(),
                 assignment.task_type.value,
-                assignment.assignee.name,
+                assignee_display,
                 week_start_str
             ])
 
@@ -40,43 +43,51 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
     # Group assignments by date and task type for better calendar entries
     assignments_by_date = {}
     for assignment in schedule.assignments:
-        key = (assignment.date, assignment.task_type)
+        key = (assignment.date, assignment.task_type, assignment.shift_label)
         if key not in assignments_by_date:
             assignments_by_date[key] = []
         assignments_by_date[key].append(assignment)
     
     # Create events
-    for (assignment_date, task_type), assignments in assignments_by_date.items():
+    for (assignment_date, task_type, shift_label), assignments in assignments_by_date.items():
         assignee_names = ", ".join(a.assignee.name for a in assignments)
         
         # Set times based on task type
         from datetime import time as time_class
         if task_type == TaskType.ATM_MORNING:
             # Sunday special: up to 09:00
-            if assignment_date.weekday() == 6:
-                start_time = datetime.combine(assignment_date, time_class(7, 30))
-                end_time = datetime.combine(assignment_date, time_class(9, 0))
+            if shift_label and "09:00" in shift_label:
+                start_time = datetime.combine(assignment_date, time_class(9, 0))
+                end_time = datetime.combine(assignment_date, time_class(12, 0))
             else:
                 start_time = datetime.combine(assignment_date, time_class(7, 30))
                 end_time = datetime.combine(assignment_date, time_class(8, 30))
-            title = f"ATM Morning Report - {assignee_names}"
+            title = f"ATM Morning Report - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
         elif task_type == TaskType.ATM_MIDNIGHT:
-            if assignment_date.weekday() == 6:
-                # Sunday second slot 09:00 - 16:00
+            if shift_label and "06:00" in shift_label:
+                start_time = datetime.combine(assignment_date, time_class(6, 0))
+                end_time = datetime.combine(assignment_date, time_class(9, 0))
+            elif shift_label and "11:00" in shift_label:
+                start_time = datetime.combine(assignment_date, time_class(11, 0))
+                end_time = datetime.combine(assignment_date, time_class(14, 0))
+            elif shift_label and "16:00" in shift_label:
+                start_time = datetime.combine(assignment_date, time_class(16, 0))
+                end_time = datetime.combine(assignment_date, time_class(22, 0))
+            elif shift_label and "09:00" in shift_label:
                 start_time = datetime.combine(assignment_date, time_class(9, 0))
                 end_time = datetime.combine(assignment_date, time_class(16, 0))
             else:
                 start_time = datetime.combine(assignment_date, time_class(13, 0))
                 end_time = datetime.combine(assignment_date, time_class(22, 0))
-            title = f"ATM Mid-day/Night Report - {assignee_names}"
+            title = f"ATM Mid-day/Night Report - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
         elif task_type == TaskType.SYSAID_MAKER:
             start_time = datetime.combine(assignment_date, time_class(9, 0))
             end_time = datetime.combine(assignment_date, time_class(17, 0))
-            title = f"SysAid Maker - {assignee_names}"
+            title = f"SysAid Maker - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
         elif task_type == TaskType.SYSAID_CHECKER:
             start_time = datetime.combine(assignment_date, time_class(9, 0))
             end_time = datetime.combine(assignment_date, time_class(17, 0))
-            title = f"SysAid Checker - {assignee_names}"
+            title = f"SysAid Checker - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
         else:
             start_time = datetime.combine(assignment_date, time_class(9, 0))
             end_time = datetime.combine(assignment_date, time_class(17, 0))
@@ -131,15 +142,22 @@ def export_to_xlsx(schedule: Schedule, file_path: str):
 
     for day in sorted(by_date.keys()):
         row = [day.isoformat(), "", "", "", ""]
+        aggregates = {
+            TaskType.ATM_MORNING: [],
+            TaskType.ATM_MIDNIGHT: [],
+            TaskType.SYSAID_MAKER: [],
+            TaskType.SYSAID_CHECKER: []
+        }
         for a in by_date[day]:
-            if a.task_type == TaskType.ATM_MORNING:
-                row[1] = a.assignee.name
-            elif a.task_type == TaskType.ATM_MIDNIGHT:
-                row[2] = a.assignee.name
-            elif a.task_type == TaskType.SYSAID_MAKER:
-                row[3] = a.assignee.name
-            elif a.task_type == TaskType.SYSAID_CHECKER:
-                row[4] = a.assignee.name
+            display = a.assignee.name
+            if a.shift_label:
+                display = f"{display} ({a.shift_label})"
+            aggregates.setdefault(a.task_type, []).append(display)
+
+        row[1] = "\n".join(aggregates.get(TaskType.ATM_MORNING, []))
+        row[2] = "\n".join(aggregates.get(TaskType.ATM_MIDNIGHT, []))
+        row[3] = "\n".join(aggregates.get(TaskType.SYSAID_MAKER, []))
+        row[4] = "\n".join(aggregates.get(TaskType.SYSAID_CHECKER, []))
         ws.append(row)
 
     # Autosize columns

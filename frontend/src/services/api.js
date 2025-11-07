@@ -24,6 +24,7 @@ export const createTeamMember = (member) => api.post('/team-members', member);
 export const updateTeamMember = (memberId, member) => api.put(`/team-members/${memberId}`, member);
 export const deleteTeamMember = (memberId) => api.delete(`/team-members/${memberId}`);
 export const changeMemberId = (memberId, newId) => api.patch(`/team-members/${memberId}/id`, { new_id: newId });
+export const resendCredentials = (memberId) => api.post(`/team-members/${memberId}/resend-credentials`);
 
 // Unavailable Periods
 export const createUnavailablePeriod = (period) => api.post('/unavailable-periods', period);
@@ -54,6 +55,8 @@ export const deleteTaskType = (id) => api.delete(`/task-types/${id}`);
 // Swaps
 export const proposeSwap = (payload) => api.post('/swaps', payload);
 export const decideSwap = (swapId, approve) => api.post(`/swaps/${swapId}/decision`, null, { params: { approve } });
+export const listSwaps = () => api.get('/swaps');
+export const respondSwap = (swapId, accept) => api.post(`/swaps/${swapId}/respond`, { accept });
 
 // Assignments
 export const updateAssignment = (assignmentId, memberId) => api.patch(`/assignments/${assignmentId}`, { member_id: memberId });

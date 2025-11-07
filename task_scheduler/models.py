@@ -22,6 +22,7 @@ class TeamMember:
     office_days: Set[int] = field(default_factory=lambda: {0, 1, 2, 3, 4})  # Mon-Fri by default (0=Mon, 6=Sun)
     unavailable_dates: Set[date] = field(default_factory=set)
     unavailable_ranges: List[tuple[date, date]] = field(default_factory=list)  # (start, end) inclusive
+    email: Optional[str] = None
     
     def is_available_on(self, check_date: date) -> bool:
         """Check if member is available on a specific date."""
@@ -56,6 +57,7 @@ class Assignment:
     assignee: TeamMember
     date: date
     week_start: Optional[date] = None  # For SysAid weekly assignments
+    shift_label: Optional[str] = None
     
     def __str__(self) -> str:
         return f"{self.assignee.name} -> {self.task_type.value} on {self.date}"

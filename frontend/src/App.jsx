@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { Calendar, Users, BarChart3, Moon, Sun, Monitor } from 'lucide-react';
 import Dashboard from './components/Dashboard';
@@ -11,11 +11,12 @@ import ConflictSwapManager from './components/ConflictSwapManager';
 import Login from './components/Login';
 import { getMe } from './services/api';
 import ChangePassword from './components/ChangePassword';
+import { AuthContext } from './context/AuthContext';
 
 function Navigation() {
   const location = useLocation();
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'auto');
-  const [me, setMe] = useState(null);
+  const { me, setMe } = useContext(AuthContext);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -27,7 +28,7 @@ function Navigation() {
   }, [theme]);
 
   useEffect(() => {
-    getMe().then(res => setMe(res.data)).catch(() => setMe(null));
+    setMenuOpen(false);
   }, [location.pathname]);
   
   const isActive = (path) => {
@@ -111,7 +112,7 @@ function Navigation() {
               <>
                 <span className="text-sm text-gray-600 dark:text-gray-200">{me.username} ({me.role})</span>
                 <button
-                  onClick={() => { localStorage.removeItem('access_token'); window.location.href = '/login'; }}
+                  onClick={() => { localStorage.removeItem('access_token'); setMe(null); window.location.href = '/login'; }}
                   className="btn-secondary"
                 >Logout</button>
               </>
@@ -136,27 +137,49 @@ function Navigation() {
 }
 
 function App() {
-  return (
-    <Router>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 dark:text-gray-100">
-        <Navigation />
+  const [me, setMe] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-        {/* Main Content */}
-        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/change-password" element={<RequireAuth><ChangePassword /></RequireAuth>} />
-            <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
-            <Route path="/team" element={<RequireAuth><TeamManagement /></RequireAuth>} />
-            <Route path="/schedule/generate" element={<RequireAuth><ScheduleGenerator /></RequireAuth>} />
-            <Route path="/schedule/:id" element={<RequireAuth><ScheduleView /></RequireAuth>} />
-            <Route path="/fairness" element={<RequireAuth><FairnessView /></RequireAuth>} />
-            <Route path="/task-types" element={<RequireAuth><TaskTypes /></RequireAuth>} />
-            <Route path="/conflicts" element={<RequireAuth><ConflictSwapManager /></RequireAuth>} />
-          </Routes>
-        </main>
-      </div>
-    </Router>
+  const refresh = async () => {
+    try {
+      const res = await getMe();
+      setMe(res.data);
+      return res.data;
+    } catch {
+      setMe(null);
+      return null;
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ me, setMe, refresh, loading: authLoading }}>
+      <Router>
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 dark:text-gray-100">
+          <Navigation />
+
+          {/* Main Content */}
+          <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/change-password" element={<RequireAuth><ChangePassword /></RequireAuth>} />
+              <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
+              <Route path="/team" element={<RequireAuth><TeamManagement /></RequireAuth>} />
+              <Route path="/schedule/generate" element={<RequireAuth><ScheduleGenerator /></RequireAuth>} />
+              <Route path="/schedule/:id" element={<RequireAuth><ScheduleView /></RequireAuth>} />
+              <Route path="/fairness" element={<RequireAuth><FairnessView /></RequireAuth>} />
+              <Route path="/task-types" element={<RequireAuth><TaskTypes /></RequireAuth>} />
+              <Route path="/conflicts" element={<RequireAuth><ConflictSwapManager /></RequireAuth>} />
+            </Routes>
+          </main>
+        </div>
+      </Router>
+    </AuthContext.Provider>
   );
 }
 
@@ -164,6 +187,10 @@ export default App;
 
 function RequireAuth({ children }) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  const { loading } = useContext(AuthContext);
+  if (loading) {
+    return <div className="text-center py-12">Loading...</div>;
+  }
   if (!token) {
     return <Navigate to="/login" replace />;
   }

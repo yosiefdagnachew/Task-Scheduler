@@ -52,6 +52,7 @@ class TeamMemberDB(Base):
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     office_days = Column(JSONEncodedSet, default=set)
+    email = Column(String, nullable=True)
     created_at = Column(Date, default=date.today)
     updated_at = Column(Date, default=date.today, onupdate=date.today)
     
@@ -86,6 +87,7 @@ class AssignmentDB(Base):
     assignment_date = Column(Date, nullable=False)
     week_start = Column(Date, nullable=True)  # For SysAid weekly assignments
     created_at = Column(Date, default=date.today)
+    shift_label = Column(String, nullable=True)
     
     # Relationships
     assignee = relationship("TeamMemberDB", back_populates="assignments")
@@ -154,9 +156,11 @@ class SwapRequest(Base):
     requested_by = Column(String, ForeignKey("team_members.id"), nullable=False)
     proposed_member_id = Column(String, ForeignKey("team_members.id"), nullable=True)
     reason = Column(Text, nullable=True)
-    status = Column(String, default="pending")  # pending, approved, rejected
+    status = Column(String, default="pending_peer")  # pending_peer, pending_admin, approved, rejected
     created_at = Column(DateTime, default=datetime.now)
     decided_at = Column(DateTime, nullable=True)
+    peer_decision = Column(String, nullable=True)
+    peer_decided_at = Column(DateTime, nullable=True)
     
     assignment = relationship("AssignmentDB")
     requested_by_member = relationship("TeamMemberDB", foreign_keys=[requested_by])
@@ -201,11 +205,47 @@ class Database:
                     conn.exec_driver_sql(
                         "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false"
                     )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS team_members ADD COLUMN IF NOT EXISTS email VARCHAR"
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS shift_label VARCHAR"
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS swap_requests ADD COLUMN IF NOT EXISTS peer_decision VARCHAR"
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS swap_requests ADD COLUMN IF NOT EXISTS peer_decided_at TIMESTAMP"
+                    )
                 elif dialect == "sqlite":
                     # SQLite: adding with default is fine; ignore error if exists
                     try:
                         conn.exec_driver_sql(
                             "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE team_members ADD COLUMN email VARCHAR"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE assignments ADD COLUMN shift_label VARCHAR"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE swap_requests ADD COLUMN peer_decision VARCHAR"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE swap_requests ADD COLUMN peer_decided_at TIMESTAMP"
                         )
                     except Exception:
                         pass

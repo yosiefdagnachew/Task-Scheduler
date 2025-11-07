@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Download, ArrowLeft, Trash2 } from 'lucide-react';
 import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, exportScheduleXLSX, updateAssignment, getTeamMembers, deleteSchedule } from '../services/api';
 import { format, eachDayOfInterval, parseISO } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
 
 const TASK_COLORS = {
   ATM_MORNING: 'bg-blue-100 text-blue-800',
@@ -25,6 +26,8 @@ export default function ScheduleView() {
   const [loading, setLoading] = useState(true);
   const [groupedAssignments, setGroupedAssignments] = useState({});
   const [team, setTeam] = useState([]);
+  const { me } = useAuth();
+  const isAdmin = me?.role === 'admin';
 
   useEffect(() => {
     loadSchedule();
@@ -108,6 +111,30 @@ export default function ScheduleView() {
     end: parseISO(schedule.end_date)
   });
 
+  const renderAssignmentChips = (items, colorClass) => {
+    if (!items || items.length === 0) {
+      return <span className="text-gray-400">-</span>;
+    }
+    return (
+      <div className="space-y-1">
+        {items.map(item => (
+          <div key={item.id} className="flex items-center space-x-2">
+            <span className={`px-2 py-1 text-xs font-medium rounded ${colorClass}`}>
+              {item.member_name}
+              {item.shift_label ? <span className="block text-[10px] text-gray-600">{item.shift_label}</span> : null}
+            </span>
+            {isAdmin && (
+              <select className="text-xs border px-1 py-0.5 rounded" value="" onChange={(e)=>{ if (e.target.value) { reassign(item.id, e.target.value); e.target.value=''; } }}>
+                <option value="">Change</option>
+                {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
+              </select>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="px-4 py-6">
       <div className="mb-6 flex justify-between items-center">
@@ -125,16 +152,18 @@ export default function ScheduleView() {
           </p>
         </div>
         <div className="space-x-2">
-          <button
-            onClick={async ()=>{
-              if (!window.confirm('Delete this schedule? This cannot be undone.')) return;
-              try { await deleteSchedule(id); navigate('/'); } catch(e){ alert('Failed to delete'); }
-            }}
-            className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50"
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete
-          </button>
+          {isAdmin && (
+            <button
+              onClick={async ()=>{
+                if (!window.confirm('Delete this schedule? This cannot be undone.')) return;
+                try { await deleteSchedule(id); navigate('/'); } catch(e){ alert('Failed to delete'); }
+              }}
+              className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </button>
+          )}
           <button
             onClick={handleExport}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
@@ -188,10 +217,10 @@ export default function ScheduleView() {
                 const dateStr = format(date, 'yyyy-MM-dd');
                 const assignments = groupedAssignments[dateStr] || [];
                 
-                const atmMorning = assignments.find(a => a.task_type === 'ATM_MORNING');
-                const atmMidnight = assignments.find(a => a.task_type === 'ATM_MIDNIGHT');
-                const sysaidMaker = assignments.find(a => a.task_type === 'SYSAID_MAKER');
-                const sysaidChecker = assignments.find(a => a.task_type === 'SYSAID_CHECKER');
+                const atmMorning = assignments.filter(a => a.task_type === 'ATM_MORNING');
+                const atmMidnight = assignments.filter(a => a.task_type === 'ATM_MIDNIGHT');
+                const sysaidMaker = assignments.filter(a => a.task_type === 'SYSAID_MAKER');
+                const sysaidChecker = assignments.filter(a => a.task_type === 'SYSAID_CHECKER');
 
                 return (
                   <tr key={dateStr}>
@@ -199,64 +228,16 @@ export default function ScheduleView() {
                       <div>{format(date, 'EEE, MMM dd')}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {atmMorning ? (
-                        <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.ATM_MORNING}`}>
-                            {atmMorning.member_name}
-                          </span>
-                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(atmMorning.id, e.target.value)}>
-                            <option value="">Change</option>
-                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                          </select>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
+                      {renderAssignmentChips(atmMorning, TASK_COLORS.ATM_MORNING)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {atmMidnight ? (
-                        <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.ATM_MIDNIGHT}`}>
-                            {atmMidnight.member_name}
-                          </span>
-                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(atmMidnight.id, e.target.value)}>
-                            <option value="">Change</option>
-                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                          </select>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
+                      {renderAssignmentChips(atmMidnight, TASK_COLORS.ATM_MIDNIGHT)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {sysaidMaker ? (
-                        <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.SYSAID_MAKER}`}>
-                            {sysaidMaker.member_name}
-                          </span>
-                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(sysaidMaker.id, e.target.value)}>
-                            <option value="">Change</option>
-                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                          </select>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
+                      {renderAssignmentChips(sysaidMaker, TASK_COLORS.SYSAID_MAKER)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {sysaidChecker ? (
-                        <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 text-xs font-medium rounded ${TASK_COLORS.SYSAID_CHECKER}`}>
-                            {sysaidChecker.member_name}
-                          </span>
-                          <select className="text-xs border px-1 py-0.5 rounded" onChange={(e)=>reassign(sysaidChecker.id, e.target.value)}>
-                            <option value="">Change</option>
-                            {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                          </select>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
+                      {renderAssignmentChips(sysaidChecker, TASK_COLORS.SYSAID_CHECKER)}
                     </td>
                   </tr>
                 );

@@ -1,18 +1,21 @@
 import React, { useState } from 'react';
 import { changePassword } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export default function ChangePassword() {
   const [current, setCurrent] = useState('');
   const [nextPwd, setNextPwd] = useState('');
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { refresh } = useAuth();
 
   const submit = async (e) => {
     e.preventDefault();
     setError(null);
     try {
       await changePassword({ current_password: current || undefined, new_password: nextPwd });
+      await refresh();
       navigate('/');
     } catch (e) {
       setError(e.response?.data?.detail || 'Failed to change password');
