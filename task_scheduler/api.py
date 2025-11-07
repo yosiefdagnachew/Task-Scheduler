@@ -377,9 +377,10 @@ async def update_team_member(member_id: str, member: TeamMemberCreate, session: 
     if not db_member:
         raise HTTPException(status_code=404, detail="Member not found")
     
+    # Update fields - handle email explicitly (can be None/empty string)
     db_member.name = member.name
     db_member.office_days = set(member.office_days)
-    db_member.email = member.email
+    db_member.email = member.email if member.email else None
     db_member.updated_at = date.today()
     session.commit()
     session.refresh(db_member)
@@ -417,15 +418,34 @@ async def change_member_id(member_id: str, payload: MemberIdUpdate, session: Ses
     if conflict:
         raise HTTPException(status_code=400, detail="Target ID already exists")
 
-    # Update foreign key references
-    session.query(UnavailablePeriod).filter(UnavailablePeriod.member_id == member_id).update({UnavailablePeriod.member_id: payload.new_id})
-    session.query(AssignmentDB).filter(AssignmentDB.member_id == member_id).update({AssignmentDB.member_id: payload.new_id})
-    session.query(FairnessCount).filter(FairnessCount.member_id == member_id).update({FairnessCount.member_id: payload.new_id})
-    session.query(SwapRequest).filter(SwapRequest.requested_by == member_id).update({SwapRequest.requested_by: payload.new_id})
-    session.query(SwapRequest).filter(SwapRequest.proposed_member_id == member_id).update({SwapRequest.proposed_member_id: payload.new_id})
+    # Since id is a primary key, we need to create a new row and delete the old one
+    # First, create new team member with new ID (copying all data)
+    new_member = TeamMemberDB(
+        id=payload.new_id,
+        name=existing.name,
+        office_days=existing.office_days.copy() if existing.office_days else set(),
+        email=existing.email,
+        created_at=existing.created_at,
+        updated_at=date.today()
+    )
+    session.add(new_member)
+    session.flush()  # Flush to get the new row in the database without committing
 
-    # Update member row
-    existing.id = payload.new_id
+    # Now update foreign key references (new ID exists in team_members now)
+    session.query(UnavailablePeriod).filter(UnavailablePeriod.member_id == member_id).update({UnavailablePeriod.member_id: payload.new_id}, synchronize_session=False)
+    session.query(AssignmentDB).filter(AssignmentDB.member_id == member_id).update({AssignmentDB.member_id: payload.new_id}, synchronize_session=False)
+    session.query(FairnessCount).filter(FairnessCount.member_id == member_id).update({FairnessCount.member_id: payload.new_id}, synchronize_session=False)
+    session.query(SwapRequest).filter(SwapRequest.requested_by == member_id).update({SwapRequest.requested_by: payload.new_id}, synchronize_session=False)
+    session.query(SwapRequest).filter(SwapRequest.proposed_member_id == member_id).update({SwapRequest.proposed_member_id: payload.new_id}, synchronize_session=False)
+    
+    # Update User table if username matches the old member_id
+    user_row = session.query(User).filter(User.username == member_id).first()
+    if user_row:
+        user_row.username = payload.new_id
+        user_row.member_id = payload.new_id
+
+    # Delete old member row
+    session.delete(existing)
     session.commit()
     return {"message": "Member ID updated", "id": payload.new_id}
 
