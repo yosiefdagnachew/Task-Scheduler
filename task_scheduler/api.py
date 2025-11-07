@@ -471,10 +471,10 @@ async def delete_team_member(member_id: str, session: Session = Depends(get_db),
     # Delete fairness counts
     session.query(FairnessCount).filter(FairnessCount.member_id == member_id).delete(synchronize_session=False)
     
-    # Delete user account if exists
-    user_row = session.query(User).filter(User.member_id == member_id).first()
-    if user_row:
-        session.delete(user_row)
+    # Delete user account if exists (by member_id OR username, since username is often the same as member_id)
+    session.query(User).filter(
+        (User.member_id == member_id) | (User.username == member_id)
+    ).delete(synchronize_session=False)
     
     # Finally delete the team member
     session.delete(db_member)
