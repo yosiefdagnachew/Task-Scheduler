@@ -63,8 +63,7 @@ def init_database():
                 password_hash=get_password_hash(temp_password),
                 role="member",
                 member_id=member.id,
-                must_change_password=True,
-                email=getattr(member, 'email', None)
+                must_change_password=True
             )
             session.add(user)
             print(f"  Added member: {member.name} ({member.id}) - Password: {temp_password}")
