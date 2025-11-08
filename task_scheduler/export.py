@@ -1,17 +1,25 @@
-"""Export schedules to various formats (CSV, ICS)."""
+"""Export schedules to various formats (CSV, ICS, PDF, Excel)."""
 
 import csv
 from datetime import datetime
 from typing import List
+from pathlib import Path
 import pytz
 from ics import Calendar, Event
 from .models import Schedule, Assignment, TaskType
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 
 
 def export_to_csv(schedule: Schedule, file_path: str):
     """Export schedule to CSV file."""
+    # Ensure output directory exists
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
     with open(file_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['Date', 'Task Type', 'Assignee', 'Week Start (SysAid)'])
@@ -120,6 +128,8 @@ def export_audit_log(audit_log: str, file_path: str):
 
 def export_to_xlsx(schedule: Schedule, file_path: str):
     """Export schedule to XLSX with vertical layout (dates as rows)."""
+    # Ensure output directory exists
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     ws = wb.active
     ws.title = "Schedule"
@@ -169,4 +179,133 @@ def export_to_xlsx(schedule: Schedule, file_path: str):
         ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 2
 
     wb.save(file_path)
+
+
+def export_to_excel(schedule: Schedule, file_path: str):
+    """Export schedule to Excel format (using openpyxl, same as XLSX)."""
+    # Excel format is essentially XLSX, so reuse the XLSX export
+    export_to_xlsx(schedule, file_path)
+
+
+def export_to_pdf(schedule: Schedule, file_path: str):
+    """Export schedule to PDF format."""
+    # Ensure output directory exists
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        textColor=colors.HexColor('#1e40af'),
+        spaceAfter=30,
+        alignment=1  # Center
+    )
+    title = Paragraph(f"Schedule: {schedule.start_date} to {schedule.end_date}", title_style)
+    elements.append(title)
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Group assignments by date
+    by_date = {}
+    for a in schedule.assignments:
+        d = a.date
+        by_date.setdefault(d, []).append(a)
+    
+    # Table data
+    data = [['Date', 'ATM Morning', 'ATM Mid/Night', 'SysAid Maker', 'SysAid Checker']]
+    
+    for day in sorted(by_date.keys()):
+        row = [day.strftime('%Y-%m-%d (%A)'), '', '', '', '']
+        aggregates = {
+            TaskType.ATM_MORNING: [],
+            TaskType.ATM_MIDNIGHT: [],
+            TaskType.SYSAID_MAKER: [],
+            TaskType.SYSAID_CHECKER: []
+        }
+        for a in by_date[day]:
+            display = a.assignee.name
+            if a.shift_label:
+                display = f"{display} ({a.shift_label})"
+            aggregates.setdefault(a.task_type, []).append(display)
+        
+        row[1] = '\n'.join(aggregates.get(TaskType.ATM_MORNING, [])) or '-'
+        row[2] = '\n'.join(aggregates.get(TaskType.ATM_MIDNIGHT, [])) or '-'
+        row[3] = '\n'.join(aggregates.get(TaskType.SYSAID_MAKER, [])) or '-'
+        row[4] = '\n'.join(aggregates.get(TaskType.SYSAID_CHECKER, [])) or '-'
+        data.append(row)
+    
+    # Create table
+    table = Table(data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f3f4f6')]),
+    ]))
+    
+    elements.append(table)
+    doc.build(elements)
+
+
+def export_fairness_to_pdf(fairness_data: List[dict], file_path: str):
+    """Export fairness tracking data to PDF."""
+    # Ensure output directory exists
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        textColor=colors.HexColor('#1e40af'),
+        spaceAfter=30,
+        alignment=1  # Center
+    )
+    title = Paragraph("Fairness Tracking Report", title_style)
+    elements.append(title)
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Table data
+    data = [['Member', 'ATM Morning', 'ATM Mid/Night', 'SysAid Maker', 'SysAid Checker', 'Total']]
+    
+    for member in fairness_data:
+        row = [
+            member.get('member_name', member.get('member_id', 'Unknown')),
+            str(member.get('counts', {}).get('ATM_MORNING', 0)),
+            str(member.get('counts', {}).get('ATM_MIDNIGHT', 0)),
+            str(member.get('counts', {}).get('SYSAID_MAKER', 0)),
+            str(member.get('counts', {}).get('SYSAID_CHECKER', 0)),
+            str(member.get('total', 0))
+        ]
+        data.append(row)
+    
+    # Create table
+    table = Table(data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch, 1*inch, 0.8*inch])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f3f4f6')]),
+    ]))
+    
+    elements.append(table)
+    doc.build(elements)
 

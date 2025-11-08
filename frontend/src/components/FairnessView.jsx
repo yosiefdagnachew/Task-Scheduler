@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, RefreshCw } from 'lucide-react';
+import { BarChart3, RefreshCw, Download } from 'lucide-react';
 import { getFairnessCounts } from '../services/api';
+import api from '../services/api';
 
 export default function FairnessView() {
   const [fairness, setFairness] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadFairness();
@@ -12,6 +14,7 @@ export default function FairnessView() {
 
   const loadFairness = async () => {
     try {
+      setRefreshing(true);
       const response = await getFairnessCounts();
       setFairness(response.data);
     } catch (error) {
@@ -19,6 +22,25 @@ export default function FairnessView() {
       alert('Failed to load fairness data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleExportPDF = async () => {
+    try {
+      const response = await api.get('/fairness/export/pdf', { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fairness_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Error exporting fairness PDF:', error);
+      alert('Failed to export fairness PDF');
     }
   };
 
@@ -35,13 +57,25 @@ export default function FairnessView() {
           <h2 className="text-2xl font-bold text-gray-900">Fairness Tracking</h2>
           <p className="mt-1 text-sm text-gray-500">Assignment distribution across team members</p>
         </div>
-        <button
-          onClick={loadFairness}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={loadFairness}
+            disabled={refreshing}
+            className={`inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-all duration-200 ${
+              refreshing ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
+            }`}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+          <button
+            onClick={handleExportPDF}
+            className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-all duration-200 hover:scale-105"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export PDF
+          </button>
+        </div>
       </div>
 
       <div className="bg-white shadow rounded-lg p-6">

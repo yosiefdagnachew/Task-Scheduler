@@ -15,7 +15,7 @@ from .database import db, TeamMemberDB, UnavailablePeriod, AssignmentDB, Fairnes
 from .models import TaskType, TeamMember, Assignment, Schedule, FairnessLedger
 from .config import SchedulingConfig
 from .scheduler import Scheduler
-from .export import export_to_csv, export_to_ics, export_audit_log, export_to_xlsx
+from .export import export_to_csv, export_to_ics, export_audit_log, export_to_xlsx, export_to_excel, export_to_pdf, export_fairness_to_pdf
 from .loader import load_team
 from jose import jwt, JWTError
 import os
@@ -827,6 +827,40 @@ async def get_fairness_counts(session: Session = Depends(get_db)):
     
     return result
 
+@app.get("/api/fairness/export/pdf")
+async def export_fairness_pdf(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Export fairness tracking data to PDF."""
+    members = session.query(TeamMemberDB).all()
+    fairness_data = []
+    
+    # Get assignments from last 90 days
+    from datetime import timedelta
+    cutoff_date = date.today() - timedelta(days=90)
+    
+    for member in members:
+        counts = {}
+        total = 0
+        for task_type in TaskType:
+            # Count assignments in the last 90 days
+            assignment_count = session.query(AssignmentDB).filter(
+                AssignmentDB.member_id == member.id,
+                AssignmentDB.task_type == task_type,
+                AssignmentDB.assignment_date >= cutoff_date
+            ).count()
+            counts[task_type.value] = assignment_count
+            total += assignment_count
+        
+        fairness_data.append({
+            "member_id": member.id,
+            "member_name": member.name,
+            "counts": counts,
+            "total": total
+        })
+    
+    file_path = f"out/fairness_{date.today().isoformat()}.pdf"
+    export_fairness_to_pdf(fairness_data, file_path)
+    return FileResponse(file_path, media_type="application/pdf", filename=f"fairness_{date.today().isoformat()}.pdf")
+
 # Configuration
 @app.get("/api/config")
 async def get_config():
@@ -1075,15 +1109,83 @@ async def update_assignment(assignment_id: int, payload: AssignmentUpdate, sessi
     session.commit()
     return {"message": "Assignment updated"}
 
-# Exports: Excel/PDF (basic stubs)
+# Exports: Excel/PDF
 @app.get("/api/schedules/{schedule_id}/export/excel")
-async def export_schedule_excel(schedule_id: int):
-    # For brevity, return 501 Not Implemented in this MVP
-    raise HTTPException(status_code=501, detail="Excel export not implemented yet")
+async def export_schedule_excel(schedule_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Export schedule to Excel format."""
+    schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    # Build schedule model
+    db_members = session.query(TeamMemberDB).all()
+    members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
+    
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+    
+    schedule_assignments = []
+    for a in assignments:
+        member = members_dict.get(a.member_id)
+        if member:
+            assignment = Assignment(
+                task_type=a.task_type,
+                assignee=member,
+                date=a.assignment_date,
+                week_start=a.week_start,
+                shift_label=a.shift_label
+            )
+            schedule_assignments.append(assignment)
+    
+    schedule_obj = Schedule(
+        assignments=schedule_assignments,
+        start_date=schedule.start_date,
+        end_date=schedule.end_date
+    )
+    
+    file_path = f"out/schedule_{schedule_id}.xlsx"
+    export_to_excel(schedule_obj, file_path)
+    return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=f"schedule_{schedule_id}.xlsx")
 
 @app.get("/api/schedules/{schedule_id}/export/pdf")
-async def export_schedule_pdf(schedule_id: int):
-    # For brevity, return 501 Not Implemented in this MVP
-    raise HTTPException(status_code=501, detail="PDF export not implemented yet")
+async def export_schedule_pdf(schedule_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Export schedule to PDF format."""
+    schedule = session.query(ScheduleDB).filter(ScheduleDB.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    # Build schedule model
+    db_members = session.query(TeamMemberDB).all()
+    members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
+    
+    assignments = session.query(AssignmentDB).filter(
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+    
+    schedule_assignments = []
+    for a in assignments:
+        member = members_dict.get(a.member_id)
+        if member:
+            assignment = Assignment(
+                task_type=a.task_type,
+                assignee=member,
+                date=a.assignment_date,
+                week_start=a.week_start,
+                shift_label=a.shift_label
+            )
+            schedule_assignments.append(assignment)
+    
+    schedule_obj = Schedule(
+        assignments=schedule_assignments,
+        start_date=schedule.start_date,
+        end_date=schedule.end_date
+    )
+    
+    file_path = f"out/schedule_{schedule_id}.pdf"
+    export_to_pdf(schedule_obj, file_path)
+    return FileResponse(file_path, media_type="application/pdf", filename=f"schedule_{schedule_id}.pdf")
 
 

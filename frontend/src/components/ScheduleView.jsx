@@ -77,15 +77,35 @@ export default function ScheduleView() {
 
   const handleExportExcel = async () => {
     try {
-      await exportScheduleExcel(id);
-      alert('Excel export not implemented in API');
-    } catch (e) { alert(e.response?.data?.detail || 'Failed'); }
+      const response = await exportScheduleExcel(id);
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `schedule_${id}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e) { 
+      alert(e.response?.data?.detail || 'Failed to export Excel');
+    }
   };
   const handleExportPDF = async () => {
     try {
-      await exportSchedulePDF(id);
-      alert('PDF export not implemented in API');
-    } catch (e) { alert(e.response?.data?.detail || 'Failed'); }
+      const response = await exportSchedulePDF(id);
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `schedule_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e) { 
+      alert(e.response?.data?.detail || 'Failed to export PDF');
+    }
   };
 
   const reassign = async (assignmentId, memberId) => {
