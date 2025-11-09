@@ -262,6 +262,21 @@ class Database:
         self.engine.dispose()
 
 
-# Global database instance
-db = Database()
+# Lazy database instance - only created when accessed
+_db_instance = None
+
+def _get_db_instance():
+    """Get the global database instance, creating it if necessary."""
+    global _db_instance
+    if _db_instance is None:
+        _db_instance = Database()
+    return _db_instance
+
+# For backward compatibility, create a property-like accessor
+class _DatabaseProxy:
+    """Proxy object that lazily initializes the database."""
+    def __getattr__(self, name):
+        return getattr(_get_db_instance(), name)
+
+db = _DatabaseProxy()
 
