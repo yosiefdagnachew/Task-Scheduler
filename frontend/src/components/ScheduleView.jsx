@@ -57,6 +57,73 @@ export default function ScheduleView() {
     }
   };
 
+  // Detect columns dynamically from assignments
+  const getDynamicColumns = () => {
+    if (!schedule || !schedule.assignments) return [];
+    
+    // Check if this is a default ATM/SysAid schedule or custom task schedule
+    const hasDefaultTasks = schedule.assignments.some(a => 
+      ['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER'].includes(a.task_type)
+    );
+    
+    if (hasDefaultTasks) {
+      // Default schedule - use standard columns
+      return [
+        { key: 'ATM_MORNING', label: 'ATM Morning', color: TASK_COLORS.ATM_MORNING },
+        { key: 'ATM_MIDNIGHT', label: 'ATM Mid/Night', color: TASK_COLORS.ATM_MIDNIGHT },
+        { key: 'SYSAID_MAKER', label: 'SysAid Maker', color: TASK_COLORS.SYSAID_MAKER },
+        { key: 'SYSAID_CHECKER', label: 'SysAid Checker', color: TASK_COLORS.SYSAID_CHECKER }
+      ];
+    } else {
+      // Custom task schedule - extract columns from shift_label
+      const columnMap = new Map();
+      
+      schedule.assignments.forEach(assignment => {
+        // Extract task type and shift from shift_label
+        // Format: "TaskName - ShiftLabel" or just "TaskName"
+        let columnKey = assignment.task_type;
+        let columnLabel = assignment.task_type;
+        
+        if (assignment.shift_label) {
+          // Check if shift_label contains task name and shift
+          const parts = assignment.shift_label.split(' - ');
+          if (parts.length >= 2) {
+            const taskName = parts[0];
+            const shiftLabel = parts[1];
+            columnKey = `${taskName}_${shiftLabel}`;
+            columnLabel = `${taskName} - ${shiftLabel}`;
+          } else {
+            // Just task name
+            columnKey = assignment.shift_label;
+            columnLabel = assignment.shift_label;
+          }
+        }
+        
+        if (!columnMap.has(columnKey)) {
+          // Generate a color for this column
+          const colors = [
+            'bg-blue-100 text-blue-800',
+            'bg-purple-100 text-purple-800',
+            'bg-green-100 text-green-800',
+            'bg-yellow-100 text-yellow-800',
+            'bg-pink-100 text-pink-800',
+            'bg-indigo-100 text-indigo-800',
+            'bg-red-100 text-red-800',
+            'bg-orange-100 text-orange-800'
+          ];
+          const colorIndex = columnMap.size % colors.length;
+          columnMap.set(columnKey, {
+            key: columnKey,
+            label: columnLabel,
+            color: colors[colorIndex]
+          });
+        }
+      });
+      
+      return Array.from(columnMap.values());
+    }
+  };
+
   const handleExport = async () => {
     try {
       const response = await exportScheduleCSV(id);
@@ -218,47 +285,51 @@ export default function ScheduleView() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Date
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ATM Morning
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ATM Mid/Night
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  SysAid Maker
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  SysAid Checker
-                </th>
+                {getDynamicColumns().map(column => (
+                  <th key={column.key} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {column.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {dates.map((date) => {
                 const dateStr = format(date, 'yyyy-MM-dd');
                 const assignments = groupedAssignments[dateStr] || [];
+                const columns = getDynamicColumns();
                 
-                const atmMorning = assignments.filter(a => a.task_type === 'ATM_MORNING');
-                const atmMidnight = assignments.filter(a => a.task_type === 'ATM_MIDNIGHT');
-                const sysaidMaker = assignments.filter(a => a.task_type === 'SYSAID_MAKER');
-                const sysaidChecker = assignments.filter(a => a.task_type === 'SYSAID_CHECKER');
+                // Group assignments by column
+                const getAssignmentsForColumn = (column) => {
+                  if (['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER'].includes(column.key)) {
+                    // Default task types
+                    return assignments.filter(a => a.task_type === column.key);
+                  } else {
+                    // Custom task types - match by shift_label
+                    return assignments.filter(a => {
+                      if (!a.shift_label) return false;
+                      // Check if shift_label matches this column
+                      const parts = a.shift_label.split(' - ');
+                      if (parts.length >= 2) {
+                        const taskName = parts[0];
+                        const shiftLabel = parts[1];
+                        const key = `${taskName}_${shiftLabel}`;
+                        return key === column.key || a.shift_label === column.key;
+                      }
+                      return a.shift_label === column.key;
+                    });
+                  }
+                };
 
                 return (
                   <tr key={dateStr}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       <div>{format(date, 'EEE, MMM dd')}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {renderAssignmentChips(atmMorning, TASK_COLORS.ATM_MORNING)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {renderAssignmentChips(atmMidnight, TASK_COLORS.ATM_MIDNIGHT)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {renderAssignmentChips(sysaidMaker, TASK_COLORS.SYSAID_MAKER)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {renderAssignmentChips(sysaidChecker, TASK_COLORS.SYSAID_CHECKER)}
-                    </td>
+                    {columns.map(column => (
+                      <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {renderAssignmentChips(getAssignmentsForColumn(column), column.color)}
+                      </td>
+                    ))}
                   </tr>
                 );
               })}
@@ -271,13 +342,28 @@ export default function ScheduleView() {
       <div className="mt-6 bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Assignment Summary</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Object.entries(TASK_LABELS).map(([key, label]) => {
-            const taskAssignments = schedule.assignments.filter(a => a.task_type === key);
+          {getDynamicColumns().map(column => {
+            const taskAssignments = schedule.assignments.filter(a => {
+              if (['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER'].includes(column.key)) {
+                return a.task_type === column.key;
+              } else {
+                // Custom task types
+                if (!a.shift_label) return false;
+                const parts = a.shift_label.split(' - ');
+                if (parts.length >= 2) {
+                  const taskName = parts[0];
+                  const shiftLabel = parts[1];
+                  const key = `${taskName}_${shiftLabel}`;
+                  return key === column.key || a.shift_label === column.key;
+                }
+                return a.shift_label === column.key;
+              }
+            });
             const uniqueMembers = new Set(taskAssignments.map(a => a.member_name));
             return (
-              <div key={key} className="border rounded-lg p-4">
-                <div className={`inline-block px-2 py-1 text-xs font-medium rounded mb-2 ${TASK_COLORS[key]}`}>
-                  {label}
+              <div key={column.key} className="border rounded-lg p-4">
+                <div className={`inline-block px-2 py-1 text-xs font-medium rounded mb-2 ${column.color}`}>
+                  {column.label}
                 </div>
                 <div className="text-2xl font-bold text-gray-900">{uniqueMembers.size}</div>
                 <div className="text-sm text-gray-500">unique members</div>

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 import json
 
 from .database import db, TeamMemberDB, UnavailablePeriod, AssignmentDB, FairnessCount, ScheduleDB, TaskTypeDef, ShiftDef, SwapRequest, User
+from .task_type_model import DynamicTaskType, TaskTypeShift
 from .models import TaskType, TeamMember, Assignment, Schedule, FairnessLedger
 from .config import SchedulingConfig
 from .scheduler import Scheduler
@@ -548,9 +549,56 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
             if hasattr(config, key):
                 setattr(config, key, value)
     
+    # Load task types from database ONLY if specific tasks are requested
+    task_types = None
+    if request.tasks and len(request.tasks) > 0:
+        # Load ONLY the specific task types requested (not all)
+        db_task_types = session.query(TaskTypeDef).filter(TaskTypeDef.name.in_(request.tasks)).all()
+        
+        if db_task_types:
+            # Convert database TaskTypeDef to DynamicTaskType
+            task_types = []
+            for db_tt in db_task_types:
+                shifts = session.query(ShiftDef).filter(ShiftDef.task_type_id == db_tt.id).all()
+                # Get rules for this task type
+                rules = json.loads(db_tt.rules_json) if db_tt.rules_json else {}
+                
+                task_type_shifts = []
+                for s in shifts:
+                    # Check if this specific shift requires rest (can be in shift-specific rules or task-level rules)
+                    shift_requires_rest = False
+                    if rules.get("shifts"):
+                        # Check if this shift has specific rest rule
+                        shift_rule = next((sr for sr in rules.get("shifts", []) if sr.get("label") == s.label), None)
+                        if shift_rule:
+                            shift_requires_rest = shift_rule.get("requires_rest", False)
+                        else:
+                            shift_requires_rest = rules.get("requires_rest", False)
+                    else:
+                        shift_requires_rest = rules.get("requires_rest", False)
+                    
+                    task_type_shifts.append(TaskTypeShift(
+                        label=s.label,
+                        start_time=s.start_time,
+                        end_time=s.end_time,
+                        required_count=s.required_count,
+                        requires_rest=shift_requires_rest
+                    ))
+                task_types.append(DynamicTaskType(
+                    id=db_tt.id,
+                    name=db_tt.name,
+                    recurrence=db_tt.recurrence,
+                    required_count=db_tt.required_count,
+                    role_labels=db_tt.role_labels or [],
+                    rules_json=json.loads(db_tt.rules_json) if db_tt.rules_json else None,
+                    shifts=task_type_shifts
+                ))
+    
     # Generate schedule
+    # If task_types is provided, schedule only those tasks
+    # If task_types is None, use default ATM/SysAid logic
     scheduler = Scheduler(config)
-    schedule = scheduler.generate_schedule(members, request.start_date, request.end_date)
+    schedule = scheduler.generate_schedule(members, request.start_date, request.end_date, task_types=task_types)
     
     # Save to database
     db_schedule = ScheduleDB(

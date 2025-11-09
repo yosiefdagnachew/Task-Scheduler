@@ -11,7 +11,7 @@ export default function ScheduleGenerator() {
   const [formData, setFormData] = useState({
     start_date: '',
     end_date: '',
-    tasks: [],
+    task: '',  // Changed from tasks array to single task string
     seed: '',
     fairness_aggressiveness: 1
   });
@@ -29,7 +29,7 @@ export default function ScheduleGenerator() {
       const payload = {
         start_date: formData.start_date,
         end_date: formData.end_date,
-        tasks: formData.tasks,
+        tasks: formData.task ? [formData.task] : [],  // Send as array with single task or empty
         fairness_aggressiveness: formData.fairness_aggressiveness,
         seed: formData.seed ? Number(formData.seed) : undefined
       };
@@ -110,31 +110,25 @@ export default function ScheduleGenerator() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tasks
+                  Task Type (Optional)
                 </label>
-                <div className="space-y-2">
-                  {taskTypes.length === 0 ? (
-                    <div className="text-sm text-gray-500">No custom task types. Default ATM/SysAid will be used.</div>
-                  ) : (
-                    taskTypes.map(t => (
-                      <label key={t.id} className="flex items-center">
-                        <input
-                          type="checkbox"
-                          checked={formData.tasks.includes(t.name)}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setFormData(prev => ({
-                              ...prev,
-                              tasks: checked ? [...prev.tasks, t.name] : prev.tasks.filter(n => n !== t.name)
-                            }));
-                          }}
-                          className="mr-2"
-                        />
-                        <span className="text-sm">{t.name} <span className="text-gray-400">({t.recurrence})</span></span>
-                      </label>
-                    ))
-                  )}
-                </div>
+                <select
+                  value={formData.task}
+                  onChange={(e) => setFormData({ ...formData, task: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Default (ATM & SysAid Monitoring)</option>
+                  {taskTypes.map(t => (
+                    <option key={t.id} value={t.name}>
+                      {t.name} ({t.recurrence})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  {formData.task 
+                    ? `Schedule will be generated for "${formData.task}" only`
+                    : "Leave empty to generate default ATM & SysAid schedule"}
+                </p>
               </div>
             </div>
 

@@ -1,41 +1,43 @@
 """Core scheduling logic for ATM and SysAid tasks."""
 
 from datetime import date, timedelta
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple, Dict, Any
 from .models import TeamMember, Assignment, TaskType, Schedule, FairnessLedger
 from .config import SchedulingConfig
+from .rest_day_helper import calculate_rest_day, is_rest_day
+from .task_type_model import DynamicTaskType, TaskTypeShift
 
 ATM_SHIFT_PLAN = {
     0: [  # Monday
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
         {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
     ],
-    1: [
+    1: [  # Tuesday
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
         {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
     ],
-    2: [
+    2: [  # Wednesday
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
         {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
     ],
-    3: [
+    3: [  # Thursday
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
         {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
     ],
-    4: [
+    4: [  # Friday - rest day is Monday (not Saturday)
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
         {"task_type": TaskType.ATM_MIDNIGHT, "label": "Mid/Night (13:00-22:00)", "rest_next_day": True},
     ],
-    5: [  # Saturday
+    5: [  # Saturday - no rest day
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
-        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Midday (06:00)", "rest_next_day": True},
-        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Midday (11:00)", "rest_next_day": True},
-        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Night (16:00)", "rest_next_day": True},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Midday (06:00)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Midday (11:00)", "rest_next_day": False},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Night (16:00)", "rest_next_day": False},
     ],
-    6: [  # Sunday
+    6: [  # Sunday - no rest day
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (07:30)", "rest_next_day": False},
         {"task_type": TaskType.ATM_MORNING, "label": "Morning (09:00)", "rest_next_day": False},
-        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Night (16:00)", "rest_next_day": True},
+        {"task_type": TaskType.ATM_MIDNIGHT, "label": "Night (16:00)", "rest_next_day": False},
     ],
 }
 
@@ -67,18 +69,41 @@ class Scheduler:
         self,
         members: List[TeamMember],
         start_date: date,
-        end_date: date
+        end_date: date,
+        task_types: Optional[List[DynamicTaskType]] = None
     ) -> Schedule:
-        """Generate a complete schedule for the given date range."""
+        """
+        Generate a complete schedule for the given date range.
+        
+        Args:
+            members: List of team members
+            start_date: Start date for schedule
+            end_date: End date for schedule
+            task_types: Optional list of DynamicTaskType records from database.
+                       If None, uses hardcoded ATM/SysAid logic (backward compatibility)
+        """
         schedule = Schedule(start_date=start_date, end_date=end_date)
         
-        # Generate ATM schedule first (daily)
-        atm_assignments = self._schedule_atm(members, start_date, end_date)
-        schedule.assignments.extend(atm_assignments)
-        
-        # Generate SysAid schedule (weekly)
-        sysaid_assignments = self._schedule_sysaid(members, start_date, end_date, schedule)
-        schedule.assignments.extend(sysaid_assignments)
+        if task_types:
+            # Use database-driven task types
+            for task_type in task_types:
+                if task_type.recurrence == "daily":
+                    assignments = self._schedule_daily_task_type(members, task_type, start_date, end_date, schedule)
+                elif task_type.recurrence == "weekly":
+                    assignments = self._schedule_weekly_task_type(members, task_type, start_date, end_date, schedule)
+                elif task_type.recurrence == "monthly":
+                    assignments = self._schedule_monthly_task_type(members, task_type, start_date, end_date, schedule)
+                else:
+                    self.audit.log(f"WARNING: Unknown recurrence '{task_type.recurrence}' for task type '{task_type.name}', skipping")
+                    continue
+                schedule.assignments.extend(assignments)
+        else:
+            # Backward compatibility: use hardcoded ATM/SysAid logic
+            atm_assignments = self._schedule_atm(members, start_date, end_date)
+            schedule.assignments.extend(atm_assignments)
+            
+            sysaid_assignments = self._schedule_sysaid(members, start_date, end_date, schedule)
+            schedule.assignments.extend(sysaid_assignments)
         
         return schedule
     
@@ -118,8 +143,11 @@ class Scheduler:
                 assigned_today.add(assignee.id)
 
                 if self.config.atm_rest_rule_enabled and rest_next_day:
-                    rest_day = current_date + timedelta(days=1)
-                    self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}. Rest on {rest_day}")
+                    rest_day = calculate_rest_day(current_date)
+                    if rest_day:
+                        self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}. Rest on {rest_day}")
+                    else:
+                        self.audit.log(f"{current_date} - Assigned {assignee.name} to {label} (no rest day)")
                 else:
                     self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}")
 
@@ -142,8 +170,9 @@ class Scheduler:
         b_assignments = [a for a in existing_schedule.assignments if a.task_type == TaskType.ATM_MIDNIGHT]
         member_rest_days = {}
         for a in b_assignments:
-            rd = a.date + timedelta(days=1)
-            member_rest_days.setdefault(a.assignee.id, set()).add(rd)
+            rd = calculate_rest_day(a.date)
+            if rd:
+                member_rest_days.setdefault(a.assignee.id, set()).add(rd)
 
         # Map ATM assignments by date to avoid double-booking with SysAid
         atm_by_date = {}
@@ -226,6 +255,287 @@ class Scheduler:
         
         return assignments
     
+    def _schedule_daily_task_type(
+        self,
+        members: List[TeamMember],
+        task_type: DynamicTaskType,
+        start_date: date,
+        end_date: date,
+        existing_schedule: Schedule
+    ) -> List[Assignment]:
+        """Schedule a daily task type from database."""
+        assignments = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            weekday = current_date.weekday()
+            shifts = task_type.get_shifts_for_weekday(weekday)
+            assigned_today = {a.assignee.id for a in assignments if a.date == current_date}
+            
+            # Also check existing schedule for conflicts
+            existing_today = {a.assignee.id for a in existing_schedule.assignments if a.date == current_date}
+            assigned_today.update(existing_today)
+            
+            for shift in shifts:
+                # Get eligible members for this shift
+                eligible = self._get_eligible_members_for_dynamic_task(
+                    members, current_date, task_type, shift, existing_schedule, assignments
+                )
+                eligible = [m for m in eligible if m.id not in assigned_today]
+                
+                if not eligible:
+                    self.audit.log(f"WARNING: {current_date} - No eligible members for {task_type.name} - {shift.label}")
+                    continue
+                
+                # Select assignee based on fairness (using task type name as identifier)
+                assignee = self._select_assignee_for_dynamic_task(eligible, task_type, current_date)
+                
+                # Create assignment (we'll need to map to TaskType enum or create a new model)
+                # For now, we'll use a string identifier and store it in shift_label
+                assignments.append(Assignment(
+                    task_type=TaskType.ATM_MORNING,  # Placeholder - will need to handle this differently
+                    assignee=assignee,
+                    date=current_date,
+                    shift_label=f"{task_type.name} - {shift.label}"
+                ))
+                assigned_today.add(assignee.id)
+                
+                # Handle rest day if required
+                if shift.requires_rest:
+                    rest_day = calculate_rest_day(current_date)
+                    if rest_day:
+                        self.audit.log(f"{current_date} - Assigned {assignee.name} to {task_type.name} - {shift.label}. Rest on {rest_day}")
+                    else:
+                        self.audit.log(f"{current_date} - Assigned {assignee.name} to {task_type.name} - {shift.label} (no rest day)")
+                else:
+                    self.audit.log(f"{current_date} - Assigned {assignee.name} to {task_type.name} - {shift.label}")
+                
+                # Update fairness ledger (using task type name as key)
+                self._increment_fairness_for_dynamic_task(assignee.id, task_type)
+            
+            current_date += timedelta(days=1)
+        
+        return assignments
+    
+    def _schedule_weekly_task_type(
+        self,
+        members: List[TeamMember],
+        task_type: DynamicTaskType,
+        start_date: date,
+        end_date: date,
+        existing_schedule: Schedule
+    ) -> List[Assignment]:
+        """Schedule a weekly task type from database."""
+        assignments = []
+        
+        # Get week start day from rules or default to Monday
+        week_start_day = task_type.rules_json.get("week_start_day", 0) if task_type.rules_json else 0
+        
+        # Build rest days map from existing assignments
+        member_rest_days = {}
+        for a in existing_schedule.assignments:
+            if a.shift_label and task_type.name in a.shift_label:
+                # Check if this assignment requires rest
+                # We'll need to track this in the assignment or check shift definition
+                rd = calculate_rest_day(a.date)
+                if rd:
+                    member_rest_days.setdefault(a.assignee.id, set()).add(rd)
+        
+        current_date = start_date
+        while current_date <= end_date:
+            # Find week start
+            days_since_week_start = current_date.weekday() - week_start_day
+            if days_since_week_start < 0:
+                days_since_week_start += 7
+            week_start = current_date - timedelta(days=days_since_week_start)
+            week_end = week_start + timedelta(days=6)
+            
+            # Skip if already processed
+            if any(a.week_start == week_start for a in assignments if hasattr(a, 'week_start')):
+                current_date = week_end + timedelta(days=1)
+                continue
+            
+            # Get week dates (exclude Sunday if configured)
+            exclude_sunday = task_type.rules_json.get("exclude_sunday", True) if task_type.rules_json else True
+            week_dates = [week_start + timedelta(days=i) for i in range(6 if exclude_sunday else 7)]
+            
+            # Find eligible members
+            eligible_members = []
+            for member in members:
+                rest_set = member_rest_days.get(member.id, set())
+                is_available_all_week = all(
+                    member.is_available_on(d) and (d not in rest_set)
+                    for d in week_dates
+                )
+                if is_available_all_week:
+                    eligible_members.append(member)
+            
+            if len(eligible_members) < task_type.required_count:
+                self.audit.log(f"WARNING: Week {week_start} - Insufficient eligible members for {task_type.name} (need {task_type.required_count}, found {len(eligible_members)})")
+                current_date = week_end + timedelta(days=1)
+                continue
+            
+            # Select assignees based on role labels or required count
+            selected_members = []
+            for i in range(task_type.required_count):
+                if i < len(eligible_members):
+                    # Select based on fairness
+                    remaining = [m for m in eligible_members if m.id not in [s.id for s in selected_members]]
+                    if remaining:
+                        selected = self._select_assignee_for_dynamic_task(remaining, task_type, week_start)
+                        selected_members.append(selected)
+            
+            # Create assignments for the week
+            for week_date in week_dates:
+                if week_date <= end_date:
+                    for idx, member in enumerate(selected_members):
+                        role_label = task_type.role_labels[idx] if idx < len(task_type.role_labels) else f"Role {idx+1}"
+                        assignments.append(Assignment(
+                            task_type=TaskType.ATM_MORNING,  # Placeholder
+                            assignee=member,
+                            date=week_date,
+                            week_start=week_start,
+                            shift_label=f"{task_type.name} - {role_label} (week of {week_start.isoformat()})"
+                        ))
+                        self._increment_fairness_for_dynamic_task(member.id, task_type)
+            
+            self.audit.log(f"Week {week_start} - Assigned {len(selected_members)} members to {task_type.name}")
+            current_date = week_end + timedelta(days=1)
+        
+        return assignments
+    
+    def _schedule_monthly_task_type(
+        self,
+        members: List[TeamMember],
+        task_type: DynamicTaskType,
+        start_date: date,
+        end_date: date,
+        existing_schedule: Schedule
+    ) -> List[Assignment]:
+        """Schedule a monthly task type from database."""
+        assignments = []
+        
+        # Get day of month from rules or default to 1st
+        day_of_month = task_type.rules_json.get("day_of_month", 1) if task_type.rules_json else 1
+        
+        current_date = start_date
+        while current_date <= end_date:
+            # Check if this date matches the monthly pattern
+            if current_date.day == day_of_month:
+                shifts = task_type.get_shifts_for_weekday(current_date.weekday())
+                assigned_today = {a.assignee.id for a in assignments if a.date == current_date}
+                existing_today = {a.assignee.id for a in existing_schedule.assignments if a.date == current_date}
+                assigned_today.update(existing_today)
+                
+                for shift in shifts:
+                    eligible = self._get_eligible_members_for_dynamic_task(
+                        members, current_date, task_type, shift, existing_schedule, assignments
+                    )
+                    eligible = [m for m in eligible if m.id not in assigned_today]
+                    
+                    if not eligible:
+                        continue
+                    
+                    assignee = self._select_assignee_for_dynamic_task(eligible, task_type, current_date)
+                    assignments.append(Assignment(
+                        task_type=TaskType.ATM_MORNING,  # Placeholder
+                        assignee=assignee,
+                        date=current_date,
+                        shift_label=f"{task_type.name} - {shift.label}"
+                    ))
+                    assigned_today.add(assignee.id)
+                    self._increment_fairness_for_dynamic_task(assignee.id, task_type)
+            
+            current_date += timedelta(days=1)
+        
+        return assignments
+    
+    def _get_eligible_members_for_dynamic_task(
+        self,
+        members: List[TeamMember],
+        check_date: date,
+        task_type: DynamicTaskType,
+        shift: TaskTypeShift,
+        existing_schedule: Schedule,
+        new_assignments: List[Assignment]
+    ) -> List[TeamMember]:
+        """Get eligible members for a dynamic task type."""
+        eligible = []
+        
+        # Get rules from task type
+        requires_office_days = task_type.rules_json.get("requires_office_days", True) if task_type.rules_json else True
+        
+        for member in members:
+            # Check availability
+            if requires_office_days:
+                if not member.is_available_on(check_date):
+                    continue
+            else:
+                # Allow any day unless explicitly unavailable
+                if check_date in member.unavailable_dates:
+                    continue
+                if any(start <= check_date <= end for start, end in member.unavailable_ranges):
+                    continue
+            
+            # Check rest days if shift requires rest
+            if shift.requires_rest:
+                # Check if member has rest day on check_date from previous assignments
+                has_rest = any(
+                    is_rest_day(check_date, a.date)
+                    for a in existing_schedule.assignments + new_assignments
+                    if a.assignee.id == member.id and a.shift_label and task_type.name in a.shift_label
+                )
+                if has_rest:
+                    continue
+            
+            eligible.append(member)
+        
+        return eligible
+    
+    def _select_assignee_for_dynamic_task(
+        self,
+        eligible_members: List[TeamMember],
+        task_type: DynamicTaskType,
+        assignment_date: date
+    ) -> TeamMember:
+        """Select assignee for dynamic task type based on fairness."""
+        if not eligible_members:
+            raise ValueError("No eligible members available")
+        
+        if len(eligible_members) == 1:
+            return eligible_members[0]
+        
+        # Calculate fairness scores using task type name as identifier
+        scores = []
+        for member in eligible_members:
+            count = self._get_fairness_count_for_dynamic_task(member.id, task_type)
+            total_count = self.ledger.get_total_count(member.id)
+            scores.append((count, total_count, member))
+        
+        scores.sort(key=lambda x: (x[0], x[1]))
+        best_score = scores[0][0]
+        best_members = [s[2] for s in scores if s[0] == best_score]
+        
+        if len(best_members) > 1:
+            tie_breaker = hash((assignment_date.isoformat(), task_type.name)) % len(best_members)
+            selected = best_members[tie_breaker]
+        else:
+            selected = best_members[0]
+        
+        return selected
+    
+    def _get_fairness_count_for_dynamic_task(self, member_id: str, task_type: DynamicTaskType) -> int:
+        """Get fairness count for a dynamic task type."""
+        # Use task type name as key in a separate tracking dict
+        # For now, we'll use a simple approach with the existing ledger
+        # In a full implementation, we'd need a separate ledger for dynamic task types
+        return 0  # Placeholder - will need proper implementation
+    
+    def _increment_fairness_for_dynamic_task(self, member_id: str, task_type: DynamicTaskType):
+        """Increment fairness count for a dynamic task type."""
+        # Placeholder - will need proper implementation with separate tracking
+        pass
+    
     def _get_eligible_members(
         self,
         members: List[TeamMember],
@@ -256,13 +566,16 @@ class Scheduler:
                 if not member.is_available_on(check_date):
                     continue
 
-            # If rest rule applies: a member who did ATM_MIDNIGHT on D must rest on D+1 for ALL ATM tasks
+            # If rest rule applies: a member who did ATM_MIDNIGHT on D must rest on the calculated rest day for ALL ATM tasks
             if self.config.atm_rest_rule_enabled and task_type in {TaskType.ATM_MORNING, TaskType.ATM_MIDNIGHT}:
-                had_b_previous_day = any(
-                    a.task_type == TaskType.ATM_MIDNIGHT and a.assignee.id == member.id and (check_date - a.date).days == 1
+                # Check if member has a rest day on check_date from any previous ATM_MIDNIGHT assignment
+                has_rest_day = any(
+                    a.task_type == TaskType.ATM_MIDNIGHT 
+                    and a.assignee.id == member.id 
+                    and is_rest_day(check_date, a.date)
                     for a in existing_assignments
                 )
-                if had_b_previous_day:
+                if has_rest_day:
                     continue
             
             # For B-shift, check cooldown (avoid consecutive B-shifts)
