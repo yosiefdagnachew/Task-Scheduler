@@ -61,12 +61,72 @@ export default function ScheduleView() {
   const getDynamicColumns = () => {
     if (!schedule || !schedule.assignments) return [];
     
-    // Check if this is a default ATM/SysAid schedule or custom task schedule
-    const hasDefaultTasks = schedule.assignments.some(a => 
-      ['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER'].includes(a.task_type)
-    );
+    // Check ALL assignments to see if any have custom task shift_label format
+    // Custom tasks have shift_label in format "TaskName - ShiftLabel" where TaskName is NOT a default task
+    const customTaskNames = new Set();
+    const defaultTaskNames = ['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER', 'ATM', 'SysAid'];
     
-    if (hasDefaultTasks) {
+    schedule.assignments.forEach(a => {
+      if (a.shift_label && a.shift_label.includes(' - ')) {
+        const parts = a.shift_label.split(' - ');
+        if (parts.length >= 2) {
+          const taskName = parts[0].trim();
+          // If task name is NOT in default list, it's a custom task
+          if (!defaultTaskNames.includes(taskName)) {
+            customTaskNames.add(taskName);
+          }
+        }
+      }
+    });
+    
+    // If we found custom task names, use custom columns
+    if (customTaskNames.size > 0) {
+      // Custom task schedule - extract columns from shift_label
+      const columnMap = new Map();
+      
+      schedule.assignments.forEach(assignment => {
+        if (!assignment.shift_label) return;
+        
+        // Extract task type and shift from shift_label
+        // Format: "TaskName - ShiftLabel"
+        const parts = assignment.shift_label.split(' - ');
+        if (parts.length >= 2) {
+          const taskName = parts[0].trim();
+          const shiftLabel = parts[1].trim();
+          
+          // Only process if this is a custom task (not default)
+          if (!defaultTaskNames.includes(taskName)) {
+            const columnKey = `${taskName}_${shiftLabel}`;
+            const columnLabel = `${taskName} - ${shiftLabel}`;
+            
+            if (!columnMap.has(columnKey)) {
+              // Generate a color for this column
+              const colors = [
+                'bg-blue-100 text-blue-800',
+                'bg-purple-100 text-purple-800',
+                'bg-green-100 text-green-800',
+                'bg-yellow-100 text-yellow-800',
+                'bg-pink-100 text-pink-800',
+                'bg-indigo-100 text-indigo-800',
+                'bg-red-100 text-red-800',
+                'bg-orange-100 text-orange-800'
+              ];
+              const colorIndex = columnMap.size % colors.length;
+              columnMap.set(columnKey, {
+                key: columnKey,
+                label: columnLabel,
+                color: colors[colorIndex]
+              });
+            }
+          }
+        }
+      });
+      
+      // Return custom columns if we found any, otherwise fall back to default
+      if (columnMap.size > 0) {
+        return Array.from(columnMap.values());
+      }
+    } else {
       // Default schedule - use standard columns
       return [
         { key: 'ATM_MORNING', label: 'ATM Morning', color: TASK_COLORS.ATM_MORNING },
@@ -74,53 +134,6 @@ export default function ScheduleView() {
         { key: 'SYSAID_MAKER', label: 'SysAid Maker', color: TASK_COLORS.SYSAID_MAKER },
         { key: 'SYSAID_CHECKER', label: 'SysAid Checker', color: TASK_COLORS.SYSAID_CHECKER }
       ];
-    } else {
-      // Custom task schedule - extract columns from shift_label
-      const columnMap = new Map();
-      
-      schedule.assignments.forEach(assignment => {
-        // Extract task type and shift from shift_label
-        // Format: "TaskName - ShiftLabel" or just "TaskName"
-        let columnKey = assignment.task_type;
-        let columnLabel = assignment.task_type;
-        
-        if (assignment.shift_label) {
-          // Check if shift_label contains task name and shift
-          const parts = assignment.shift_label.split(' - ');
-          if (parts.length >= 2) {
-            const taskName = parts[0];
-            const shiftLabel = parts[1];
-            columnKey = `${taskName}_${shiftLabel}`;
-            columnLabel = `${taskName} - ${shiftLabel}`;
-          } else {
-            // Just task name
-            columnKey = assignment.shift_label;
-            columnLabel = assignment.shift_label;
-          }
-        }
-        
-        if (!columnMap.has(columnKey)) {
-          // Generate a color for this column
-          const colors = [
-            'bg-blue-100 text-blue-800',
-            'bg-purple-100 text-purple-800',
-            'bg-green-100 text-green-800',
-            'bg-yellow-100 text-yellow-800',
-            'bg-pink-100 text-pink-800',
-            'bg-indigo-100 text-indigo-800',
-            'bg-red-100 text-red-800',
-            'bg-orange-100 text-orange-800'
-          ];
-          const colorIndex = columnMap.size % colors.length;
-          columnMap.set(columnKey, {
-            key: columnKey,
-            label: columnLabel,
-            color: colors[colorIndex]
-          });
-        }
-      });
-      
-      return Array.from(columnMap.values());
     }
   };
 
@@ -301,8 +314,22 @@ export default function ScheduleView() {
                 // Group assignments by column
                 const getAssignmentsForColumn = (column) => {
                   if (['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER'].includes(column.key)) {
-                    // Default task types
-                    return assignments.filter(a => a.task_type === column.key);
+                    // Default task types - match by task_type AND ensure shift_label doesn't indicate custom task
+                    return assignments.filter(a => {
+                      if (a.task_type !== column.key) return false;
+                      // If shift_label exists and has custom task format, exclude it
+                      if (a.shift_label && a.shift_label.includes(' - ')) {
+                        const parts = a.shift_label.split(' - ');
+                        if (parts.length >= 2) {
+                          const taskName = parts[0].trim();
+                          const defaultTaskNames = ['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER', 'ATM', 'SysAid'];
+                          // Only include if it's a default task name
+                          return defaultTaskNames.includes(taskName);
+                        }
+                      }
+                      // If no shift_label or doesn't have " - ", it's a default task
+                      return true;
+                    });
                   } else {
                     // Custom task types - match by shift_label
                     return assignments.filter(a => {
@@ -310,11 +337,12 @@ export default function ScheduleView() {
                       // Check if shift_label matches this column
                       const parts = a.shift_label.split(' - ');
                       if (parts.length >= 2) {
-                        const taskName = parts[0];
-                        const shiftLabel = parts[1];
+                        const taskName = parts[0].trim();
+                        const shiftLabel = parts[1].trim();
                         const key = `${taskName}_${shiftLabel}`;
-                        return key === column.key || a.shift_label === column.key;
+                        return key === column.key;
                       }
+                      // If no " - " separator, check if shift_label matches column key
                       return a.shift_label === column.key;
                     });
                   }
@@ -345,16 +373,29 @@ export default function ScheduleView() {
           {getDynamicColumns().map(column => {
             const taskAssignments = schedule.assignments.filter(a => {
               if (['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER'].includes(column.key)) {
-                return a.task_type === column.key;
+                // Default task types - match by task_type AND ensure shift_label doesn't indicate custom task
+                if (a.task_type !== column.key) return false;
+                // If shift_label exists and has custom task format, exclude it
+                if (a.shift_label && a.shift_label.includes(' - ')) {
+                  const parts = a.shift_label.split(' - ');
+                  if (parts.length >= 2) {
+                    const taskName = parts[0].trim();
+                    const defaultTaskNames = ['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER', 'ATM', 'SysAid'];
+                    // Only include if it's a default task name
+                    return defaultTaskNames.includes(taskName);
+                  }
+                }
+                // If no shift_label or doesn't have " - ", it's a default task
+                return true;
               } else {
-                // Custom task types
+                // Custom task types - match by shift_label
                 if (!a.shift_label) return false;
                 const parts = a.shift_label.split(' - ');
                 if (parts.length >= 2) {
-                  const taskName = parts[0];
-                  const shiftLabel = parts[1];
+                  const taskName = parts[0].trim();
+                  const shiftLabel = parts[1].trim();
                   const key = `${taskName}_${shiftLabel}`;
-                  return key === column.key || a.shift_label === column.key;
+                  return key === column.key;
                 }
                 return a.shift_label === column.key;
               }

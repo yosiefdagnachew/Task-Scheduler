@@ -269,7 +269,17 @@ def _get_db_instance():
     """Get the global database instance, creating it if necessary."""
     global _db_instance
     if _db_instance is None:
-        _db_instance = Database()
+        try:
+            _db_instance = Database()
+        except RuntimeError as e:
+            # Re-raise with more helpful message
+            raise RuntimeError(
+                f"{str(e)}\n\n"
+                "To fix this:\n"
+                "1. Create a .env file in the project root\n"
+                "2. Add: DATABASE_URL=sqlite:///./task_scheduler.db\n"
+                "   OR for PostgreSQL: DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/dbname"
+            ) from e
     return _db_instance
 
 # For backward compatibility, create a property-like accessor

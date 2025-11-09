@@ -18,6 +18,30 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Add response interceptor for error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    console.error('API Error:', {
+      url: error.config?.url,
+      method: error.config?.method,
+      status: error.response?.status,
+      message: error.response?.data?.detail || error.message,
+      data: error.response?.data
+    });
+    
+    // If 401, clear token and redirect to login
+    if (error.response?.status === 401) {
+      localStorage.removeItem('access_token');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
 // Team Members
 export const getTeamMembers = () => api.get('/team-members');
 export const createTeamMember = (member) => api.post('/team-members', member);

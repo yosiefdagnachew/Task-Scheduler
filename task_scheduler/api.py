@@ -34,9 +34,39 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
-    return pwd_context.verify(plain_password, password_hash)
+    """Verify a password against a hash, with proper error handling."""
+    if not plain_password or not password_hash:
+        return False
+    
+    # Bcrypt has a 72-byte limit, ensure password is within limit
+    if isinstance(plain_password, str):
+        # Encode to bytes to check length
+        password_bytes = plain_password.encode('utf-8')
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes (not characters!)
+            plain_password = password_bytes[:72].decode('utf-8', errors='ignore')
+    
+    try:
+        return pwd_context.verify(plain_password, password_hash)
+    except (ValueError, TypeError) as e:
+        # Log the error but don't expose details
+        print(f"Password verification error: {e}")
+        return False
 
 def get_password_hash(password: str) -> str:
+    """Hash a password, ensuring it's within bcrypt's 72-byte limit."""
+    if not password:
+        raise ValueError("Password cannot be empty")
+    
+    # Bcrypt has a 72-byte limit, ensure password is within limit
+    if isinstance(password, str):
+        # Encode to bytes to check length
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes (not characters!)
+            password = password_bytes[:72].decode('utf-8', errors='ignore')
+            print(f"Warning: Password truncated to 72 bytes for bcrypt compatibility")
+    
     return pwd_context.hash(password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -125,11 +155,18 @@ class ScheduleResponse(BaseModel):
 
 # Dependency to get database session
 def get_db():
-    session = db.get_session()
     try:
-        yield session
-    finally:
-        session.close()
+        session = db.get_session()
+        try:
+            yield session
+        finally:
+            session.close()
+    except Exception as e:
+        # Log database connection errors
+        import traceback
+        print(f"Database connection error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
 
 def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)) -> User:
     cred_exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
@@ -209,22 +246,64 @@ async def health_check():
 # Auth endpoints
 @app.post("/api/auth/register")
 async def register(payload: RegisterPayload, session: Session = Depends(get_db)):
-    existing = session.query(User).filter(User.username == payload.username).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
-    password_hash = get_password_hash(payload.password)
-    user = User(username=payload.username, password_hash=password_hash, role=payload.role or "member", member_id=payload.member_id, must_change_password=bool(payload.must_change_password))
-    session.add(user)
-    session.commit()
-    return {"message": "Registered"}
+    try:
+        existing = session.query(User).filter(User.username == payload.username).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        # Validate password length
+        if not payload.password:
+            raise HTTPException(status_code=400, detail="Password cannot be empty")
+        
+        password_hash = get_password_hash(payload.password)
+        user = User(
+            username=payload.username, 
+            password_hash=password_hash, 
+            role=payload.role or "member", 
+            member_id=payload.member_id, 
+            must_change_password=bool(payload.must_change_password)
+        )
+        session.add(user)
+        session.commit()
+        return {"message": "Registered"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Registration error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_db)):
-    user = session.query(User).filter(User.username == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.password_hash):
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
-    token = create_access_token({"sub": user.username, "role": user.role, "member_id": user.member_id})
-    return TokenResponse(access_token=token)
+    try:
+        user = session.query(User).filter(User.username == form_data.username).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+        
+        # Validate password_hash exists and is reasonable
+        if not user.password_hash:
+            raise HTTPException(status_code=400, detail="User account has no password set")
+        
+        # Check if password_hash looks like a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+        if not user.password_hash.startswith(('$2a$', '$2b$', '$2y$', '$2x$')):
+            raise HTTPException(
+                status_code=500, 
+                detail="Invalid password hash format. Please contact administrator to reset password."
+            )
+        
+        if not verify_password(form_data.password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+        
+        token = create_access_token({"sub": user.username, "role": user.role, "member_id": user.member_id})
+        return TokenResponse(access_token=token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Login error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 @app.get("/api/me")
 async def me(current: User = Depends(get_current_user)):
@@ -946,7 +1025,15 @@ async def get_config():
 @app.on_event("startup")
 async def startup_event():
     """Initialize database on startup."""
-    db.create_tables()
+    try:
+        print("Initializing database...")
+        db.create_tables()
+        print("Database initialized successfully")
+    except Exception as e:
+        import traceback
+        print(f"ERROR: Failed to initialize database: {e}")
+        traceback.print_exc()
+        # Don't raise - let the app start but API calls will fail with clear errors
 
 # Task Types CRUD
 class ShiftDefModel(BaseModel):

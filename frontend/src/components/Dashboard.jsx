@@ -26,6 +26,20 @@ export default function Dashboard() {
       setTeamCount(teamRes.data.length);
     } catch (error) {
       console.error('Error loading data:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        url: error.config?.url
+      });
+      // Show user-friendly error
+      if (error.response?.status === 401) {
+        // Authentication error - will be handled by interceptor
+      } else if (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error')) {
+        alert('Cannot connect to backend server. Please ensure the backend is running on http://localhost:8000');
+      } else {
+        alert(`Failed to load data: ${error.response?.data?.detail || error.message}`);
+      }
     } finally {
       setLoading(false);
     }
