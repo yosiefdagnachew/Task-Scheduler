@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, Loader } from 'lucide-react';
-import { generateSchedule, listTaskTypes } from '../services/api';
+import { Calendar, Loader, ChevronDown, Users } from 'lucide-react';
+import { generateSchedule, listTaskTypes, getTeamMembers } from '../services/api';
 import { format } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 
@@ -16,6 +16,9 @@ export default function ScheduleGenerator() {
     fairness_aggressiveness: 1
   });
   const [taskTypes, setTaskTypes] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [selectedMembers, setSelectedMembers] = useState({}); // { taskTypeName: [memberIds] }
+  const [showMemberSelector, setShowMemberSelector] = useState(false);
   const [error, setError] = useState(null);
   const { me } = useAuth();
   const isAdmin = me?.role === 'admin';
@@ -26,10 +29,27 @@ export default function ScheduleGenerator() {
     setError(null);
 
     try {
+      // Validate: if task is selected, ensure at least one member is selected
+      if (formData.task) {
+        const selected = selectedMembers[formData.task] || [];
+        if (selected.length === 0) {
+          setError('Please select at least one team member for the selected task type');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Build task_members mapping if task is selected and members are explicitly chosen
+      const task_members = {};
+      if (formData.task && selectedMembers[formData.task] && selectedMembers[formData.task].length > 0) {
+        task_members[formData.task] = selectedMembers[formData.task];
+      }
+
       const payload = {
         start_date: formData.start_date,
         end_date: formData.end_date,
         tasks: formData.task ? [formData.task] : [],  // Send as array with single task or empty
+        task_members: Object.keys(task_members).length > 0 ? task_members : undefined,
         fairness_aggressiveness: formData.fairness_aggressiveness,
         seed: formData.seed ? Number(formData.seed) : undefined
       };
@@ -45,9 +65,11 @@ export default function ScheduleGenerator() {
     }
   };
 
-  // Set default dates (next Monday to Sunday)
+  // Set default dates (next Monday to Sunday) and load data
   React.useEffect(() => {
     listTaskTypes().then(res => setTaskTypes(res.data)).catch(() => setTaskTypes([]));
+    getTeamMembers().then(res => setTeamMembers(res.data)).catch(() => setTeamMembers([]));
+    
     const today = new Date();
     const daysUntilMonday = (8 - today.getDay()) % 7 || 7;
     const nextMonday = new Date(today);
@@ -61,6 +83,62 @@ export default function ScheduleGenerator() {
       end_date: format(nextSunday, 'yyyy-MM-dd')
     }));
   }, []);
+
+  // Initialize selected members when task changes
+  React.useEffect(() => {
+    if (formData.task && !selectedMembers[formData.task]) {
+      // Default: select all members
+      setSelectedMembers(prev => ({
+        ...prev,
+        [formData.task]: teamMembers.map(m => m.id)
+      }));
+    }
+    // Close dropdown when task changes
+    setShowMemberSelector(false);
+  }, [formData.task, teamMembers]);
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showMemberSelector && !event.target.closest('.member-selector-container')) {
+        setShowMemberSelector(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMemberSelector]);
+
+  const handleMemberToggle = (memberId) => {
+    if (!formData.task) return;
+    
+    setSelectedMembers(prev => {
+      const current = prev[formData.task] || [];
+      const newSelection = current.includes(memberId)
+        ? current.filter(id => id !== memberId)
+        : [...current, memberId];
+      
+      return {
+        ...prev,
+        [formData.task]: newSelection
+      };
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (!formData.task) return;
+    setSelectedMembers(prev => ({
+      ...prev,
+      [formData.task]: teamMembers.map(m => m.id)
+    }));
+  };
+
+  const handleDeselectAll = () => {
+    if (!formData.task) return;
+    setSelectedMembers(prev => ({
+      ...prev,
+      [formData.task]: []
+    }));
+  };
 
   if (!isAdmin) {
     return (
@@ -108,27 +186,102 @@ export default function ScheduleGenerator() {
                   className="input-field"
                 />
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Task Type (Optional)
                 </label>
-                <select
-                  value={formData.task}
-                  onChange={(e) => setFormData({ ...formData, task: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Default (ATM & SysAid Monitoring)</option>
-                  {taskTypes.map(t => (
-                    <option key={t.id} value={t.name}>
-                      {t.name} ({t.recurrence})
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-xs text-gray-500">
-                  {formData.task 
-                    ? `Schedule will be generated for "${formData.task}" only`
-                    : "Leave empty to generate default ATM & SysAid schedule"}
-                </p>
+                <div className="flex gap-3 items-start">
+                  <div className="flex-1">
+                    <select
+                      value={formData.task}
+                      onChange={(e) => setFormData({ ...formData, task: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">Default (ATM & SysAid Monitoring)</option>
+                      {taskTypes.map(t => (
+                        <option key={t.id} value={t.name}>
+                          {t.name} ({t.recurrence})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {formData.task 
+                        ? `Schedule will be generated for "${formData.task}" only`
+                        : "Leave empty to generate default ATM & SysAid schedule"}
+                    </p>
+                  </div>
+                  
+                  {formData.task && (
+                    <div className="relative flex-shrink-0 member-selector-container">
+                      <button
+                        type="button"
+                        onClick={() => setShowMemberSelector(!showMemberSelector)}
+                        className="px-4 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center gap-2 text-sm font-medium text-gray-700"
+                      >
+                        <Users className="w-4 h-4" />
+                        <span>Select Members</span>
+                        <ChevronDown className={`w-4 h-4 transition-transform ${showMemberSelector ? 'rotate-180' : ''}`} />
+                        {selectedMembers[formData.task] && selectedMembers[formData.task].length > 0 && (
+                          <span className="ml-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
+                            {selectedMembers[formData.task].length}
+                          </span>
+                        )}
+                      </button>
+                      
+                      {showMemberSelector && (
+                        <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-96 overflow-hidden flex flex-col">
+                          <div className="p-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                            <span className="text-sm font-semibold text-gray-700">
+                              Select Team Members ({selectedMembers[formData.task]?.length || 0} selected)
+                            </span>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={handleSelectAll}
+                                className="text-xs px-2 py-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                              >
+                                All
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleDeselectAll}
+                                className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded"
+                              >
+                                None
+                              </button>
+                            </div>
+                          </div>
+                          <div className="overflow-y-auto p-2">
+                            {teamMembers.length === 0 ? (
+                              <p className="text-sm text-gray-500 p-2">No team members available</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {teamMembers.map(member => {
+                                  const isSelected = selectedMembers[formData.task]?.includes(member.id) || false;
+                                  return (
+                                    <label
+                                      key={member.id}
+                                      className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => handleMemberToggle(member.id)}
+                                        className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                      />
+                                      <span className="ml-2 text-sm text-gray-700">{member.name}</span>
+                                      <span className="ml-auto text-xs text-gray-500">{member.id}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

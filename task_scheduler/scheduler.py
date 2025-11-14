@@ -70,7 +70,8 @@ class Scheduler:
         members: List[TeamMember],
         start_date: date,
         end_date: date,
-        task_types: Optional[List[DynamicTaskType]] = None
+        task_types: Optional[List[DynamicTaskType]] = None,
+        task_members: Optional[Dict[str, List[str]]] = None
     ) -> Schedule:
         """
         Generate a complete schedule for the given date range.
@@ -87,12 +88,22 @@ class Scheduler:
         if task_types:
             # Use database-driven task types
             for task_type in task_types:
+                # Filter members for this task type if task_members mapping is provided
+                task_specific_members = members
+                if task_members and task_type.name in task_members:
+                    selected_member_ids = set(task_members[task_type.name])
+                    task_specific_members = [m for m in members if m.id in selected_member_ids]
+                    if not task_specific_members:
+                        self.audit.log(f"WARNING: No members selected for task type '{task_type.name}', skipping")
+                        continue
+                    self.audit.log(f"Using {len(task_specific_members)} selected members for task type '{task_type.name}'")
+                
                 if task_type.recurrence == "daily":
-                    assignments = self._schedule_daily_task_type(members, task_type, start_date, end_date, schedule)
+                    assignments = self._schedule_daily_task_type(task_specific_members, task_type, start_date, end_date, schedule)
                 elif task_type.recurrence == "weekly":
-                    assignments = self._schedule_weekly_task_type(members, task_type, start_date, end_date, schedule)
+                    assignments = self._schedule_weekly_task_type(task_specific_members, task_type, start_date, end_date, schedule)
                 elif task_type.recurrence == "monthly":
-                    assignments = self._schedule_monthly_task_type(members, task_type, start_date, end_date, schedule)
+                    assignments = self._schedule_monthly_task_type(task_specific_members, task_type, start_date, end_date, schedule)
                 else:
                     self.audit.log(f"WARNING: Unknown recurrence '{task_type.recurrence}' for task type '{task_type.name}', skipping")
                     continue

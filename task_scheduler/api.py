@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import date, datetime, timedelta
 from pydantic import BaseModel, Field
 import json
@@ -127,6 +127,7 @@ class ScheduleGenerateRequest(BaseModel):
     end_date: date
     config_override: Optional[dict] = None
     tasks: Optional[List[str]] = None  # e.g., ["ATM", "SysAid"]
+    task_members: Optional[Dict[str, List[str]]] = None  # Mapping of task type name to list of member IDs
     seed: Optional[int] = None
     fairness_aggressiveness: Optional[int] = Field(default=1, ge=1, le=5)
 
@@ -677,7 +678,13 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
     # If task_types is provided, schedule only those tasks
     # If task_types is None, use default ATM/SysAid logic
     scheduler = Scheduler(config)
-    schedule = scheduler.generate_schedule(members, request.start_date, request.end_date, task_types=task_types)
+    schedule = scheduler.generate_schedule(
+        members, 
+        request.start_date, 
+        request.end_date, 
+        task_types=task_types,
+        task_members=request.task_members
+    )
     
     # Save to database
     db_schedule = ScheduleDB(
