@@ -64,6 +64,8 @@ class Scheduler:
         self.config = config
         self.ledger = ledger or FairnessLedger(fairness_window_days=config.fairness_window_days)
         self.audit = AuditLog()
+        # Track fairness for dynamic task types (custom task types from database)
+        self.dynamic_task_counts: Dict[str, Dict[str, int]] = {}  # {task_type_name: {member_id: count}}
     
     def generate_schedule(
         self,
@@ -110,13 +112,95 @@ class Scheduler:
                 schedule.assignments.extend(assignments)
         else:
             # Backward compatibility: use hardcoded ATM/SysAid logic
-            atm_assignments = self._schedule_atm(members, start_date, end_date)
-            schedule.assignments.extend(atm_assignments)
+            # Filter members if task_members mapping is provided with "default" key
+            atm_sysaid_members = members
+            if task_members and "default" in task_members:
+                selected_member_ids = set(task_members["default"])
+                atm_sysaid_members = [m for m in members if m.id in selected_member_ids]
+                if not atm_sysaid_members:
+                    self.audit.log("WARNING: No members selected for default ATM/SysAid schedule, skipping")
+                    return schedule
+                self.audit.log(f"Using {len(atm_sysaid_members)} selected members for default ATM/SysAid schedule")
             
-            sysaid_assignments = self._schedule_sysaid(members, start_date, end_date, schedule)
+            # Schedule SysAid FIRST to ensure we have enough members
+            # Then schedule ATM while avoiding conflicts with SysAid weeks
+            sysaid_assignments = self._schedule_sysaid(atm_sysaid_members, start_date, end_date, schedule)
             schedule.assignments.extend(sysaid_assignments)
+            
+            # Now schedule ATM, but exclude members who have SysAid assignments during their weeks
+            atm_assignments = self._schedule_atm_with_sysaid_conflict_check(atm_sysaid_members, start_date, end_date, schedule)
+            schedule.assignments.extend(atm_assignments)
         
         return schedule
+    
+    def _schedule_atm_with_sysaid_conflict_check(
+        self,
+        members: List[TeamMember],
+        start_date: date,
+        end_date: date,
+        existing_schedule: Schedule
+    ) -> List[Assignment]:
+        """Schedule ATM monitoring tasks while avoiding conflicts with SysAid assignments."""
+        assignments = []
+        
+        # Build map of SysAid assignments by week
+        sysaid_by_week = {}  # {week_start: set(member_ids)}
+        for a in existing_schedule.assignments:
+            if a.task_type in {TaskType.SYSAID_MAKER, TaskType.SYSAID_CHECKER} and a.week_start:
+                if a.week_start not in sysaid_by_week:
+                    sysaid_by_week[a.week_start] = set()
+                sysaid_by_week[a.week_start].add(a.assignee.id)
+        
+        current_date = start_date
+        while current_date <= end_date:
+            weekday = current_date.weekday()
+            shifts = ATM_SHIFT_PLAN.get(weekday, ATM_SHIFT_PLAN[0])
+            assigned_today = {a.assignee.id for a in assignments if a.date == current_date}
+
+            # Check which week this date belongs to (for SysAid conflict check)
+            days_since_monday = current_date.weekday() - self.config.sysaid_week_start_day
+            if days_since_monday < 0:
+                days_since_monday += 7
+            week_start = current_date - timedelta(days=days_since_monday)
+            sysaid_members_this_week = sysaid_by_week.get(week_start, set())
+
+            for shift in shifts:
+                task_type = shift["task_type"]
+                label = shift["label"]
+                rest_next_day = shift.get("rest_next_day", False)
+
+                eligible = self._get_eligible_members(members, current_date, task_type, assignments)
+                # Exclude members who already have SysAid assignments this week
+                eligible = [m for m in eligible if m.id not in sysaid_members_this_week]
+                eligible = [m for m in eligible if m.id not in assigned_today]
+
+                if not eligible:
+                    self.audit.log(f"WARNING: {current_date} - No eligible members for {label} ({task_type.value})")
+                    continue
+
+                assignee = self._select_assignee(eligible, task_type, current_date)
+                assignments.append(Assignment(
+                    task_type=task_type,
+                    assignee=assignee,
+                    date=current_date,
+                    shift_label=label
+                ))
+                assigned_today.add(assignee.id)
+
+                if self.config.atm_rest_rule_enabled and rest_next_day:
+                    rest_day = calculate_rest_day(current_date)
+                    if rest_day:
+                        self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}. Rest on {rest_day}")
+                    else:
+                        self.audit.log(f"{current_date} - Assigned {assignee.name} to {label} (no rest day)")
+                else:
+                    self.audit.log(f"{current_date} - Assigned {assignee.name} to {label}")
+
+                self.ledger.increment(assignee.id, task_type)
+
+            current_date += timedelta(days=1)
+
+        return assignments
     
     def _schedule_atm(
         self,
@@ -210,12 +294,12 @@ class Scheduler:
             week_dates = [week_start + timedelta(days=i) for i in range(6)]
             
             # Find eligible members (must be in office for all days of the week)
-            # Relaxed: allow members who have some ATM assignments but not on all days
+            # Since SysAid is scheduled FIRST, we don't need to check for ATM conflicts here
+            # ATM will be scheduled later and will avoid SysAid conflicts
             eligible_members = []
             for member in members:
                 # Check if member is available for all days in the week
                 rest_set = member_rest_days.get(member.id, set())
-                atm_days_for_member = {d for d in week_dates if member.id in atm_by_date.get(d, set())}
                 
                 # Member must be available on all week days (Mon-Sat)
                 is_available_all_week = all(
@@ -223,8 +307,6 @@ class Scheduler:
                     for d in week_dates
                 )
                 
-                # Allow members even if they have some ATM assignments, as long as they're available
-                # The constraint is: they must be available (not resting, not unavailable) on all week days
                 if is_available_all_week:
                     eligible_members.append(member)
             
@@ -298,8 +380,8 @@ class Scheduler:
                     self.audit.log(f"WARNING: {current_date} - No eligible members for {task_type.name} - {shift.label}")
                     continue
                 
-                # Select assignee based on fairness (using task type name as identifier)
-                assignee = self._select_assignee_for_dynamic_task(eligible, task_type, current_date)
+                # Select assignee based on improved fairness algorithm
+                assignee = self._select_assignee_for_dynamic_task_improved(eligible, task_type, current_date, [])
                 
                 # Create assignment (we'll need to map to TaskType enum or create a new model)
                 # For now, we'll use a string identifier and store it in shift_label
@@ -386,14 +468,18 @@ class Scheduler:
                 current_date = week_end + timedelta(days=1)
                 continue
             
-            # Select assignees based on role labels or required count
+            # Select assignees based on role labels or required count with improved fairness
+            # For weekly tasks, we want to ensure equal distribution across all weeks
             selected_members = []
             for i in range(task_type.required_count):
                 if i < len(eligible_members):
-                    # Select based on fairness
+                    # Select based on improved fairness algorithm
                     remaining = [m for m in eligible_members if m.id not in [s.id for s in selected_members]]
                     if remaining:
-                        selected = self._select_assignee_for_dynamic_task(remaining, task_type, week_start)
+                        # Use improved selection that ensures fairness
+                        selected = self._select_assignee_for_dynamic_task_improved(
+                            remaining, task_type, week_start, selected_members
+                        )
                         selected_members.append(selected)
             
             # Create assignments for the week
@@ -423,41 +509,94 @@ class Scheduler:
         end_date: date,
         existing_schedule: Schedule
     ) -> List[Assignment]:
-        """Schedule a monthly task type from database."""
+        """Schedule a monthly task type from database with equal distribution."""
         assignments = []
         
         # Get day of month from rules or default to 1st
         day_of_month = task_type.rules_json.get("day_of_month", 1) if task_type.rules_json else 1
         
+        # First, collect all dates that need assignments
+        dates_to_schedule = []
         current_date = start_date
         while current_date <= end_date:
-            # Check if this date matches the monthly pattern
             if current_date.day == day_of_month:
-                shifts = task_type.get_shifts_for_weekday(current_date.weekday())
-                assigned_today = {a.assignee.id for a in assignments if a.date == current_date}
-                existing_today = {a.assignee.id for a in existing_schedule.assignments if a.date == current_date}
-                assigned_today.update(existing_today)
-                
-                for shift in shifts:
-                    eligible = self._get_eligible_members_for_dynamic_task(
-                        members, current_date, task_type, shift, existing_schedule, assignments
-                    )
-                    eligible = [m for m in eligible if m.id not in assigned_today]
-                    
-                    if not eligible:
-                        continue
-                    
-                    assignee = self._select_assignee_for_dynamic_task(eligible, task_type, current_date)
-                    assignments.append(Assignment(
-                        task_type=TaskType.ATM_MORNING,  # Placeholder
-                        assignee=assignee,
-                        date=current_date,
-                        shift_label=f"{task_type.name} - {shift.label}"
-                    ))
-                    assigned_today.add(assignee.id)
-                    self._increment_fairness_for_dynamic_task(assignee.id, task_type)
-            
+                dates_to_schedule.append(current_date)
             current_date += timedelta(days=1)
+        
+        if not dates_to_schedule:
+            return assignments
+        
+        # Calculate total slots needed (dates * shifts per date)
+        total_slots = 0
+        for schedule_date in dates_to_schedule:
+            shifts = task_type.get_shifts_for_weekday(schedule_date.weekday())
+            total_slots += len(shifts)
+        
+        # For equal distribution: calculate how many assignments each member should get
+        # This ensures fairness when members > slots or slots > members
+        num_members = len(members)
+        if num_members == 0:
+            return assignments
+        
+        # Calculate target assignments per member for equal distribution
+        base_assignments = total_slots // num_members
+        extra_assignments = total_slots % num_members
+        
+        # Track how many assignments each member has received
+        member_assignment_counts = {m.id: 0 for m in members}
+        
+        # Sort members by current fairness count (ascending) for initial ordering
+        members_sorted = sorted(members, key=lambda m: self._get_fairness_count_for_dynamic_task(m.id, task_type))
+        
+        # Process each date
+        for schedule_date in dates_to_schedule:
+            shifts = task_type.get_shifts_for_weekday(schedule_date.weekday())
+            assigned_today = {a.assignee.id for a in assignments if a.date == schedule_date}
+            existing_today = {a.assignee.id for a in existing_schedule.assignments if a.date == schedule_date}
+            assigned_today.update(existing_today)
+            
+            for shift in shifts:
+                # Get eligible members
+                eligible = self._get_eligible_members_for_dynamic_task(
+                    members, schedule_date, task_type, shift, existing_schedule, assignments
+                )
+                eligible = [m for m in eligible if m.id not in assigned_today]
+                
+                if not eligible:
+                    self.audit.log(f"WARNING: {schedule_date} - No eligible members for {task_type.name} - {shift.label}")
+                    continue
+                
+                # Select assignee with improved fairness algorithm
+                # Prioritize members who haven't reached their target assignment count
+                target_scores = []
+                for member in eligible:
+                    current_count = member_assignment_counts[member.id]
+                    fairness_count = self._get_fairness_count_for_dynamic_task(member.id, task_type)
+                    
+                    # Calculate target for this member
+                    member_index = next(i for i, m in enumerate(members_sorted) if m.id == member.id)
+                    target = base_assignments + (1 if member_index < extra_assignments else 0)
+                    
+                    # Score: lower is better
+                    # Primary: how far below target (negative means below target, positive means above)
+                    # Secondary: fairness count
+                    # Tertiary: total count
+                    score = (current_count - target, fairness_count, self.ledger.get_total_count(member.id))
+                    target_scores.append((score, member))
+                
+                # Sort by score (lower is better)
+                target_scores.sort(key=lambda x: x[0])
+                assignee = target_scores[0][1]
+                
+                assignments.append(Assignment(
+                    task_type=TaskType.ATM_MORNING,  # Placeholder
+                    assignee=assignee,
+                    date=schedule_date,
+                    shift_label=f"{task_type.name} - {shift.label}"
+                ))
+                assigned_today.add(assignee.id)
+                member_assignment_counts[assignee.id] += 1
+                self._increment_fairness_for_dynamic_task(assignee.id, task_type)
         
         return assignments
     
@@ -537,15 +676,17 @@ class Scheduler:
     
     def _get_fairness_count_for_dynamic_task(self, member_id: str, task_type: DynamicTaskType) -> int:
         """Get fairness count for a dynamic task type."""
-        # Use task type name as key in a separate tracking dict
-        # For now, we'll use a simple approach with the existing ledger
-        # In a full implementation, we'd need a separate ledger for dynamic task types
-        return 0  # Placeholder - will need proper implementation
+        if task_type.name not in self.dynamic_task_counts:
+            return 0
+        return self.dynamic_task_counts[task_type.name].get(member_id, 0)
     
     def _increment_fairness_for_dynamic_task(self, member_id: str, task_type: DynamicTaskType):
         """Increment fairness count for a dynamic task type."""
-        # Placeholder - will need proper implementation with separate tracking
-        pass
+        if task_type.name not in self.dynamic_task_counts:
+            self.dynamic_task_counts[task_type.name] = {}
+        if member_id not in self.dynamic_task_counts[task_type.name]:
+            self.dynamic_task_counts[task_type.name][member_id] = 0
+        self.dynamic_task_counts[task_type.name][member_id] += 1
     
     def _get_eligible_members(
         self,

@@ -29,20 +29,26 @@ export default function ScheduleGenerator() {
     setError(null);
 
     try {
-      // Validate: if task is selected, ensure at least one member is selected
-      if (formData.task) {
-        const selected = selectedMembers[formData.task] || [];
-        if (selected.length === 0) {
-          setError('Please select at least one team member for the selected task type');
-          setLoading(false);
-          return;
-        }
+      // Validate: ensure at least one member is selected
+      const taskKey = formData.task || 'default';
+      const selected = selectedMembers[taskKey] || [];
+      if (selected.length === 0) {
+        setError('Please select at least one team member');
+        setLoading(false);
+        return;
       }
 
-      // Build task_members mapping if task is selected and members are explicitly chosen
+      // Build task_members mapping
+      // For default (ATM/SysAid), use "default" key; for custom tasks, use task name
       const task_members = {};
-      if (formData.task && selectedMembers[formData.task] && selectedMembers[formData.task].length > 0) {
-        task_members[formData.task] = selectedMembers[formData.task];
+      if (selected.length > 0) {
+        if (formData.task) {
+          // Custom task type
+          task_members[formData.task] = selected;
+        } else {
+          // Default ATM/SysAid schedule
+          task_members['default'] = selected;
+        }
       }
 
       const payload = {
@@ -86,11 +92,12 @@ export default function ScheduleGenerator() {
 
   // Initialize selected members when task changes
   React.useEffect(() => {
-    if (formData.task && !selectedMembers[formData.task]) {
+    const taskKey = formData.task || 'default';
+    if (!selectedMembers[taskKey]) {
       // Default: select all members
       setSelectedMembers(prev => ({
         ...prev,
-        [formData.task]: teamMembers.map(m => m.id)
+        [taskKey]: teamMembers.map(m => m.id)
       }));
     }
     // Close dropdown when task changes
@@ -109,34 +116,34 @@ export default function ScheduleGenerator() {
   }, [showMemberSelector]);
 
   const handleMemberToggle = (memberId) => {
-    if (!formData.task) return;
+    const taskKey = formData.task || 'default';
     
     setSelectedMembers(prev => {
-      const current = prev[formData.task] || [];
+      const current = prev[taskKey] || [];
       const newSelection = current.includes(memberId)
         ? current.filter(id => id !== memberId)
         : [...current, memberId];
       
       return {
         ...prev,
-        [formData.task]: newSelection
+        [taskKey]: newSelection
       };
     });
   };
 
   const handleSelectAll = () => {
-    if (!formData.task) return;
+    const taskKey = formData.task || 'default';
     setSelectedMembers(prev => ({
       ...prev,
-      [formData.task]: teamMembers.map(m => m.id)
+      [taskKey]: teamMembers.map(m => m.id)
     }));
   };
 
   const handleDeselectAll = () => {
-    if (!formData.task) return;
+    const taskKey = formData.task || 'default';
     setSelectedMembers(prev => ({
       ...prev,
-      [formData.task]: []
+      [taskKey]: []
     }));
   };
 
@@ -211,76 +218,83 @@ export default function ScheduleGenerator() {
                     </p>
                   </div>
                   
-                  {formData.task && (
-                    <div className="relative flex-shrink-0 member-selector-container">
-                      <button
-                        type="button"
-                        onClick={() => setShowMemberSelector(!showMemberSelector)}
-                        className="px-4 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center gap-2 text-sm font-medium text-gray-700"
-                      >
-                        <Users className="w-4 h-4" />
-                        <span>Select Members</span>
-                        <ChevronDown className={`w-4 h-4 transition-transform ${showMemberSelector ? 'rotate-180' : ''}`} />
-                        {selectedMembers[formData.task] && selectedMembers[formData.task].length > 0 && (
+                  <div className="relative flex-shrink-0 member-selector-container">
+                    <button
+                      type="button"
+                      onClick={() => setShowMemberSelector(!showMemberSelector)}
+                      className="px-4 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center gap-2 text-sm font-medium text-gray-700"
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>Select Members</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showMemberSelector ? 'rotate-180' : ''}`} />
+                      {(() => {
+                        const taskKey = formData.task || 'default';
+                        const count = selectedMembers[taskKey]?.length || 0;
+                        return count > 0 ? (
                           <span className="ml-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
-                            {selectedMembers[formData.task].length}
+                            {count}
                           </span>
-                        )}
-                      </button>
-                      
-                      {showMemberSelector && (
-                        <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-96 overflow-hidden flex flex-col">
-                          <div className="p-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-                            <span className="text-sm font-semibold text-gray-700">
-                              Select Team Members ({selectedMembers[formData.task]?.length || 0} selected)
-                            </span>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={handleSelectAll}
-                                className="text-xs px-2 py-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                              >
-                                All
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleDeselectAll}
-                                className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded"
-                              >
-                                None
-                              </button>
-                            </div>
-                          </div>
-                          <div className="overflow-y-auto p-2">
-                            {teamMembers.length === 0 ? (
-                              <p className="text-sm text-gray-500 p-2">No team members available</p>
-                            ) : (
-                              <div className="space-y-1">
-                                {teamMembers.map(member => {
-                                  const isSelected = selectedMembers[formData.task]?.includes(member.id) || false;
-                                  return (
-                                    <label
-                                      key={member.id}
-                                      className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={isSelected}
-                                        onChange={() => handleMemberToggle(member.id)}
-                                        className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                                      />
-                                      <span className="ml-2 text-sm text-gray-700">{member.name}</span>
-                                      <span className="ml-auto text-xs text-gray-500">{member.id}</span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            )}
+                        ) : null;
+                      })()}
+                    </button>
+                    
+                    {showMemberSelector && (
+                      <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-96 overflow-hidden flex flex-col">
+                        <div className="p-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                          <span className="text-sm font-semibold text-gray-700">
+                            {(() => {
+                              const taskKey = formData.task || 'default';
+                              const count = selectedMembers[taskKey]?.length || 0;
+                              return `Select Team Members (${count} selected)`;
+                            })()}
+                          </span>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={handleSelectAll}
+                              className="text-xs px-2 py-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                            >
+                              All
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleDeselectAll}
+                              className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded"
+                            >
+                              None
+                            </button>
                           </div>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        <div className="overflow-y-auto p-2">
+                          {teamMembers.length === 0 ? (
+                            <p className="text-sm text-gray-500 p-2">No team members available</p>
+                          ) : (
+                            <div className="space-y-1">
+                              {teamMembers.map(member => {
+                                const taskKey = formData.task || 'default';
+                                const isSelected = selectedMembers[taskKey]?.includes(member.id) || false;
+                                return (
+                                  <label
+                                    key={member.id}
+                                    className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => handleMemberToggle(member.id)}
+                                      className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-700">{member.name}</span>
+                                    <span className="ml-auto text-xs text-gray-500">{member.id}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
