@@ -60,12 +60,20 @@ class AuditLog:
 class Scheduler:
     """Main scheduler that generates fair assignments."""
     
-    def __init__(self, config: SchedulingConfig, ledger: Optional[FairnessLedger] = None):
+    def __init__(
+        self,
+        config: SchedulingConfig,
+        ledger: Optional[FairnessLedger] = None,
+        dynamic_counts: Optional[Dict[str, Dict[str, int]]] = None
+    ):
         self.config = config
         self.ledger = ledger or FairnessLedger(fairness_window_days=config.fairness_window_days)
         self.audit = AuditLog()
         # Track fairness for dynamic task types (custom task types from database)
-        self.dynamic_task_counts: Dict[str, Dict[str, int]] = {}  # {task_type_name: {member_id: count}}
+        if dynamic_counts:
+            self.dynamic_task_counts = {task: dict(counts) for task, counts in dynamic_counts.items()}
+        else:
+            self.dynamic_task_counts = {}
     
     def generate_schedule(
         self,
@@ -383,13 +391,15 @@ class Scheduler:
                 # Select assignee based on improved fairness algorithm
                 assignee = self._select_assignee_for_dynamic_task_improved(eligible, task_type, current_date, [])
                 
-                # Create assignment (we'll need to map to TaskType enum or create a new model)
-                # For now, we'll use a string identifier and store it in shift_label
+                # Create assignment for dynamic task
                 assignments.append(Assignment(
-                    task_type=TaskType.ATM_MORNING,  # Placeholder - will need to handle this differently
+                    task_type=TaskType.DYNAMIC,
                     assignee=assignee,
                     date=current_date,
-                    shift_label=f"{task_type.name} - {shift.label}"
+                    shift_label=f"{task_type.name} - {shift.label}",
+                    custom_task_name=task_type.name,
+                    custom_task_shift=shift.label,
+                    recurrence=task_type.recurrence
                 ))
                 assigned_today.add(assignee.id)
                 
@@ -488,11 +498,14 @@ class Scheduler:
                     for idx, member in enumerate(selected_members):
                         role_label = task_type.role_labels[idx] if idx < len(task_type.role_labels) else f"Role {idx+1}"
                         assignments.append(Assignment(
-                            task_type=TaskType.ATM_MORNING,  # Placeholder
+                            task_type=TaskType.DYNAMIC,
                             assignee=member,
                             date=week_date,
                             week_start=week_start,
-                            shift_label=f"{task_type.name} - {role_label} (week of {week_start.isoformat()})"
+                            shift_label=f"{task_type.name} - {role_label} (week of {week_start.isoformat()})",
+                            custom_task_name=task_type.name,
+                            custom_task_shift=role_label,
+                            recurrence=task_type.recurrence
                         ))
                         self._increment_fairness_for_dynamic_task(member.id, task_type)
             
@@ -589,10 +602,13 @@ class Scheduler:
                 assignee = target_scores[0][1]
                 
                 assignments.append(Assignment(
-                    task_type=TaskType.ATM_MORNING,  # Placeholder
+                    task_type=TaskType.DYNAMIC,
                     assignee=assignee,
                     date=schedule_date,
-                    shift_label=f"{task_type.name} - {shift.label}"
+                    shift_label=f"{task_type.name} - {shift.label}",
+                    custom_task_name=task_type.name,
+                    custom_task_shift=shift.label,
+                    recurrence=task_type.recurrence
                 ))
                 assigned_today.add(assignee.id)
                 member_assignment_counts[assignee.id] += 1

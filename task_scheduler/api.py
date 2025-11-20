@@ -11,7 +11,19 @@ from datetime import date, datetime, timedelta
 from pydantic import BaseModel, Field
 import json
 
-from .database import db, TeamMemberDB, UnavailablePeriod, AssignmentDB, FairnessCount, ScheduleDB, TaskTypeDef, ShiftDef, SwapRequest, User
+from .database import (
+    db,
+    TeamMemberDB,
+    UnavailablePeriod,
+    AssignmentDB,
+    FairnessCount,
+    DynamicFairnessCount,
+    ScheduleDB,
+    TaskTypeDef,
+    ShiftDef,
+    SwapRequest,
+    User,
+)
 from .task_type_model import DynamicTaskType, TaskTypeShift
 from .models import TaskType, TeamMember, Assignment, Schedule, FairnessLedger
 from .config import SchedulingConfig
@@ -139,6 +151,9 @@ class AssignmentResponse(BaseModel):
     assignment_date: date
     week_start: Optional[date] = None
     shift_label: Optional[str] = None
+    custom_task_name: Optional[str] = None
+    custom_task_shift: Optional[str] = None
+    recurrence: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -674,10 +689,17 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
                     shifts=task_type_shifts
                 ))
     
+    # Load dynamic fairness counts for configurable task types
+    dynamic_fairness_counts = {}
+    dynamic_rows = session.query(DynamicFairnessCount).all()
+    for row in dynamic_rows:
+        task_counts = dynamic_fairness_counts.setdefault(row.task_name, {})
+        task_counts[row.member_id] = row.count
+    
     # Generate schedule
     # If task_types is provided, schedule only those tasks
     # If task_types is None, use default ATM/SysAid logic
-    scheduler = Scheduler(config)
+    scheduler = Scheduler(config, dynamic_counts=dynamic_fairness_counts)
     schedule = scheduler.generate_schedule(
         members, 
         request.start_date, 
@@ -703,28 +725,48 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
             member_id=assignment.assignee.id,
             assignment_date=assignment.date,
             week_start=assignment.week_start,
-            shift_label=assignment.shift_label
+            shift_label=assignment.shift_label,
+            custom_task_name=assignment.custom_task_name,
+            custom_task_shift=assignment.custom_task_shift,
+            recurrence=assignment.recurrence
         )
         session.add(db_assignment)
         # Update fairness ledger
-        fairness_count = session.query(FairnessCount).filter(
-            FairnessCount.member_id == assignment.assignee.id,
-            FairnessCount.task_type == assignment.task_type
-        ).first()
-        
-        if not fairness_count:
-            from datetime import timedelta
-            fairness_count = FairnessCount(
-                member_id=assignment.assignee.id,
-                task_type=assignment.task_type,
-                count=0,
-                period_start=date.today() - timedelta(days=90),
-                period_end=date.today()
-            )
-            session.add(fairness_count)
-        
-        fairness_count.count += 1
-        fairness_count.updated_at = date.today()
+        if assignment.task_type == TaskType.DYNAMIC:
+            fairness_count = session.query(DynamicFairnessCount).filter(
+                DynamicFairnessCount.member_id == assignment.assignee.id,
+                DynamicFairnessCount.task_name == (assignment.custom_task_name or "CUSTOM")
+            ).first()
+            
+            if not fairness_count:
+                fairness_count = DynamicFairnessCount(
+                    member_id=assignment.assignee.id,
+                    task_name=assignment.custom_task_name or "CUSTOM",
+                    count=0,
+                )
+                session.add(fairness_count)
+            
+            fairness_count.count += 1
+            fairness_count.updated_at = date.today()
+        else:
+            fairness_count = session.query(FairnessCount).filter(
+                FairnessCount.member_id == assignment.assignee.id,
+                FairnessCount.task_type == assignment.task_type
+            ).first()
+            
+            if not fairness_count:
+                from datetime import timedelta
+                fairness_count = FairnessCount(
+                    member_id=assignment.assignee.id,
+                    task_type=assignment.task_type,
+                    count=0,
+                    period_start=date.today() - timedelta(days=90),
+                    period_end=date.today()
+                )
+                session.add(fairness_count)
+            
+            fairness_count.count += 1
+            fairness_count.updated_at = date.today()
     
     session.commit()
     session.refresh(db_schedule)
@@ -745,7 +787,10 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
             "member_name": member.name if member else "Unknown",
             "assignment_date": a.assignment_date,
             "week_start": a.week_start,
-            "shift_label": a.shift_label
+            "shift_label": a.shift_label,
+            "custom_task_name": a.custom_task_name,
+            "custom_task_shift": a.custom_task_shift,
+            "recurrence": a.recurrence
         })
     
     return {

@@ -88,6 +88,9 @@ class AssignmentDB(Base):
     week_start = Column(Date, nullable=True)  # For SysAid weekly assignments
     created_at = Column(Date, default=date.today)
     shift_label = Column(String, nullable=True)
+    custom_task_name = Column(String, nullable=True)
+    custom_task_shift = Column(String, nullable=True)
+    recurrence = Column(String, nullable=True)
     
     # Relationships
     assignee = relationship("TeamMemberDB", back_populates="assignments")
@@ -107,6 +110,19 @@ class FairnessCount(Base):
     
     # Relationships
     member = relationship("TeamMemberDB", back_populates="fairness_counts")
+
+
+class DynamicFairnessCount(Base):
+    """Fairness counts for dynamic (configurable) task types."""
+    __tablename__ = "dynamic_fairness_counts"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    member_id = Column(String, ForeignKey("team_members.id"), nullable=False)
+    task_name = Column(String, nullable=False)
+    count = Column(Integer, default=0)
+    updated_at = Column(Date, default=date.today, onupdate=date.today)
+    
+    member = relationship("TeamMemberDB")
 
 
 class ScheduleDB(Base):
@@ -212,6 +228,15 @@ class Database:
                         "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS shift_label VARCHAR"
                     )
                     conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS custom_task_name VARCHAR"
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS custom_task_shift VARCHAR"
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS recurrence VARCHAR"
+                    )
+                    conn.exec_driver_sql(
                         "ALTER TABLE IF EXISTS swap_requests ADD COLUMN IF NOT EXISTS peer_decision VARCHAR"
                     )
                     conn.exec_driver_sql(
@@ -234,6 +259,24 @@ class Database:
                     try:
                         conn.exec_driver_sql(
                             "ALTER TABLE assignments ADD COLUMN shift_label VARCHAR"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE assignments ADD COLUMN custom_task_name VARCHAR"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE assignments ADD COLUMN custom_task_shift VARCHAR"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE assignments ADD COLUMN recurrence VARCHAR"
                         )
                     except Exception:
                         pass

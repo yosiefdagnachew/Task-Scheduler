@@ -12,6 +12,7 @@ class TaskType(str, Enum):
     ATM_MIDNIGHT = "ATM_MIDNIGHT"  # Mid-day+Night reporter (B)
     SYSAID_MAKER = "SYSAID_MAKER"
     SYSAID_CHECKER = "SYSAID_CHECKER"
+    DYNAMIC = "DYNAMIC"  # Placeholder for configurable task types
 
 
 @dataclass
@@ -58,6 +59,9 @@ class Assignment:
     date: date
     week_start: Optional[date] = None  # For SysAid weekly assignments
     shift_label: Optional[str] = None
+    custom_task_name: Optional[str] = None
+    custom_task_shift: Optional[str] = None
+    recurrence: Optional[str] = None
     
     def __str__(self) -> str:
         return f"{self.assignee.name} -> {self.task_type.value} on {self.date}"
