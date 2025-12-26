@@ -25,26 +25,37 @@ def main():
         print("SQLite detected — no enum-to-varchar migration needed.")
         return
 
-    # Tables to attempt migration for. Add more if your schema differs.
-    candidate_tables = [
-        "assignments",
-        "fairness_counts",
-        "dynamic_fairness_counts",
-        "fairnesscount",
+    # A list of (table, column) pairs to attempt migration for.
+    candidates = [
+        ("assignments", "task_type"),
+        ("fairness_counts", "task_type"),
+        ("dynamic_fairness_counts", "task_type"),
+        ("fairnesscount", "task_type"),
     ]
 
-    with engine.connect() as conn:
-        for t in candidate_tables:
+    with engine.begin() as conn:
+        # Perform each ALTER in its own TRY/CATCH-style block to avoid aborting the whole transaction on failure.
+        for table, column in candidates:
             try:
-                print(f"Attempting ALTER TABLE {t} ALTER COLUMN task_type TYPE VARCHAR USING task_type::varchar;")
-                conn.execute(text(f"ALTER TABLE {t} ALTER COLUMN task_type TYPE VARCHAR USING task_type::varchar;"))
-                print(f"SUCCESS: {t}")
-            except Exception as e:
-                print(f"SKIP/ERROR for {t}: {e}")
+                # Check that the column exists first
+                col_check = conn.execute(text(
+                    "SELECT 1 FROM information_schema.columns WHERE table_name = :t AND column_name = :c"),
+                    {"t": table, "c": column}
+                ).fetchone()
+                if not col_check:
+                    print(f"SKIP: {table}.{column} does not exist")
+                    continue
 
-        # Optionally drop the enum type if present (best to verify first).
+                sql = f"ALTER TABLE {table} ALTER COLUMN {column} TYPE VARCHAR USING {column}::varchar;"
+                print(f"Attempting: {sql}")
+                conn.execute(text(sql))
+                print(f"SUCCESS: {table}.{column}")
+            except Exception as e:
+                print(f"ERROR migrating {table}.{column}: {e}")
+                # continue to next candidate
+
+        # After attempting conversions, try to drop the enum type if safe
         try:
-            # Attempt to find enum types named like tasktype
             print("Attempting to drop enum type 'tasktype' if present (may fail if used elsewhere)...")
             conn.execute(text("DROP TYPE IF EXISTS tasktype;"))
             print("DROP TYPE attempted (no error).")

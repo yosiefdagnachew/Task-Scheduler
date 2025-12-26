@@ -1,4 +1,6 @@
 """Configuration management for scheduling rules."""
+from dotenv import load_dotenv
+load_dotenv()
 
 from dataclasses import dataclass, field
 from datetime import time
