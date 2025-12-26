@@ -270,7 +270,11 @@ class Scheduler:
         """Schedule SysAid tasks (weekly)."""
         assignments = []
         # Build per-member rest-day map from existing ATM assignments
-        b_assignments = [a for a in existing_schedule.assignments if a.task_type == TaskType.ATM_MIDNIGHT]
+        # Accept either enum TaskType or string identifier for dynamic tasks
+        b_assignments = [
+            a for a in existing_schedule.assignments
+            if (a.task_type == TaskType.ATM_MIDNIGHT) or (isinstance(a.task_type, str) and a.task_type == TaskType.ATM_MIDNIGHT.value)
+        ]
         member_rest_days = {}
         for a in b_assignments:
             rd = calculate_rest_day(a.date)
@@ -280,7 +284,8 @@ class Scheduler:
         # Map ATM assignments by date to avoid double-booking with SysAid
         atm_by_date = {}
         for a in existing_schedule.assignments:
-            if a.task_type in {TaskType.ATM_MORNING, TaskType.ATM_MIDNIGHT}:
+            if (a.task_type == TaskType.ATM_MORNING) or (isinstance(a.task_type, str) and a.task_type == TaskType.ATM_MORNING.value) or \
+               (a.task_type == TaskType.ATM_MIDNIGHT) or (isinstance(a.task_type, str) and a.task_type == TaskType.ATM_MIDNIGHT.value):
                 atm_by_date.setdefault(a.date, set()).add(a.assignee.id)
         
         # Find week boundaries
@@ -392,8 +397,9 @@ class Scheduler:
                 assignee = self._select_assignee_for_dynamic_task_improved(eligible, task_type, current_date, [])
                 
                 # Create assignment for dynamic task
+                # Use the task type name (string) as the stored task identifier for dynamic tasks
                 assignments.append(Assignment(
-                    task_type=TaskType.DYNAMIC,
+                    task_type=task_type.name,
                     assignee=assignee,
                     date=current_date,
                     shift_label=f"{task_type.name} - {shift.label}",
@@ -498,7 +504,7 @@ class Scheduler:
                     for idx, member in enumerate(selected_members):
                         role_label = task_type.role_labels[idx] if idx < len(task_type.role_labels) else f"Role {idx+1}"
                         assignments.append(Assignment(
-                            task_type=TaskType.DYNAMIC,
+                            task_type=task_type.name,
                             assignee=member,
                             date=week_date,
                             week_start=week_start,
@@ -602,7 +608,7 @@ class Scheduler:
                 assignee = target_scores[0][1]
                 
                 assignments.append(Assignment(
-                    task_type=TaskType.DYNAMIC,
+                    task_type=task_type.name,
                     assignee=assignee,
                     date=schedule_date,
                     shift_label=f"{task_type.name} - {shift.label}",
@@ -750,7 +756,7 @@ class Scheduler:
             if task_type == TaskType.ATM_MIDNIGHT:
                 recent_b_assignments = [
                     a for a in existing_assignments
-                    if a.task_type == TaskType.ATM_MIDNIGHT
+                    if (a.task_type == TaskType.ATM_MIDNIGHT) or (isinstance(a.task_type, str) and a.task_type == TaskType.ATM_MIDNIGHT.value)
                     and a.assignee.id == member.id
                     and (check_date - a.date).days <= self.config.atm_b_cooldown_days
                 ]

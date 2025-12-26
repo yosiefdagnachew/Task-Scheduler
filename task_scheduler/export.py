@@ -24,10 +24,13 @@ def export_to_csv(schedule: Schedule, file_path: str):
         writer = csv.writer(f)
         writer.writerow(['Date', 'Task Type', 'Assignee', 'Week Start (SysAid)'])
         
-        # Sort by date, then by task type
+        # Sort by date, then by task type (handle string identifiers for dynamic tasks)
+        def _tt_value(t):
+            return t if isinstance(t, str) else t.value
+
         sorted_assignments = sorted(
             schedule.assignments,
-            key=lambda a: (a.date, a.task_type.value)
+            key=lambda a: (a.date, _tt_value(a.task_type))
         )
         
         for assignment in sorted_assignments:
@@ -37,7 +40,7 @@ def export_to_csv(schedule: Schedule, file_path: str):
                 assignee_display = f"{assignee_display} ({assignment.shift_label})"
             writer.writerow([
                 assignment.date.isoformat(),
-                assignment.task_type.value,
+                _tt_value(assignment.task_type),
                 assignee_display,
                 week_start_str
             ])
@@ -48,6 +51,12 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
     tz = pytz.timezone(timezone)
     cal = Calendar()
     
+    def _tt_value(t):
+        return t if isinstance(t, str) else t.value
+
+    def _is_task_eq(t, enum_val):
+        return _tt_value(t) == enum_val.value
+
     # Group assignments by date and task type for better calendar entries
     assignments_by_date = {}
     for assignment in schedule.assignments:
@@ -62,7 +71,7 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
         
         # Set times based on task type
         from datetime import time as time_class
-        if task_type == TaskType.ATM_MORNING:
+        if _is_task_eq(task_type, TaskType.ATM_MORNING):
             # Sunday special: up to 09:00
             if shift_label and "09:00" in shift_label:
                 start_time = datetime.combine(assignment_date, time_class(9, 0))
@@ -71,7 +80,7 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
                 start_time = datetime.combine(assignment_date, time_class(7, 30))
                 end_time = datetime.combine(assignment_date, time_class(8, 30))
             title = f"ATM Morning Report - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
-        elif task_type == TaskType.ATM_MIDNIGHT:
+        elif _is_task_eq(task_type, TaskType.ATM_MIDNIGHT):
             if shift_label and "06:00" in shift_label:
                 start_time = datetime.combine(assignment_date, time_class(6, 0))
                 end_time = datetime.combine(assignment_date, time_class(9, 0))
@@ -88,18 +97,18 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
                 start_time = datetime.combine(assignment_date, time_class(13, 0))
                 end_time = datetime.combine(assignment_date, time_class(22, 0))
             title = f"ATM Mid-day/Night Report - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
-        elif task_type == TaskType.SYSAID_MAKER:
+        elif _is_task_eq(task_type, TaskType.SYSAID_MAKER):
             start_time = datetime.combine(assignment_date, time_class(9, 0))
             end_time = datetime.combine(assignment_date, time_class(17, 0))
             title = f"SysAid Maker - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
-        elif task_type == TaskType.SYSAID_CHECKER:
+        elif _is_task_eq(task_type, TaskType.SYSAID_CHECKER):
             start_time = datetime.combine(assignment_date, time_class(9, 0))
             end_time = datetime.combine(assignment_date, time_class(17, 0))
             title = f"SysAid Checker - {assignee_names}" + (f" ({shift_label})" if shift_label else "")
         else:
             start_time = datetime.combine(assignment_date, time_class(9, 0))
             end_time = datetime.combine(assignment_date, time_class(17, 0))
-            title = f"{task_type.value} - {assignee_names}"
+            title = f"{_tt_value(task_type)} - {assignee_names}"
         
         # Localize to timezone
         start_time = tz.localize(start_time)
@@ -109,7 +118,7 @@ def export_to_ics(schedule: Schedule, file_path: str, timezone: str = "Africa/Ad
         event.name = title
         event.begin = start_time
         event.end = end_time
-        event.description = f"Assignee(s): {assignee_names}\nTask: {task_type.value}"
+        event.description = f"Assignee(s): {assignee_names}\nTask: {_tt_value(task_type)}"
         
         cal.events.add(event)
     
@@ -145,6 +154,9 @@ def export_to_xlsx(schedule: Schedule, file_path: str):
     ws.append(headers)
 
     # Group by date
+    def _tt_value(t):
+        return t if isinstance(t, str) else t.value
+
     by_date = {}
     for a in schedule.assignments:
         d = a.date
@@ -152,22 +164,17 @@ def export_to_xlsx(schedule: Schedule, file_path: str):
 
     for day in sorted(by_date.keys()):
         row = [day.isoformat(), "", "", "", ""]
-        aggregates = {
-            TaskType.ATM_MORNING: [],
-            TaskType.ATM_MIDNIGHT: [],
-            TaskType.SYSAID_MAKER: [],
-            TaskType.SYSAID_CHECKER: []
-        }
+        aggregates: dict[str, list] = {}
         for a in by_date[day]:
             display = a.assignee.name
             if a.shift_label:
                 display = f"{display} ({a.shift_label})"
-            aggregates.setdefault(a.task_type, []).append(display)
+            aggregates.setdefault(_tt_value(a.task_type), []).append(display)
 
-        row[1] = "\n".join(aggregates.get(TaskType.ATM_MORNING, []))
-        row[2] = "\n".join(aggregates.get(TaskType.ATM_MIDNIGHT, []))
-        row[3] = "\n".join(aggregates.get(TaskType.SYSAID_MAKER, []))
-        row[4] = "\n".join(aggregates.get(TaskType.SYSAID_CHECKER, []))
+        row[1] = "\n".join(aggregates.get(TaskType.ATM_MORNING.value, []))
+        row[2] = "\n".join(aggregates.get(TaskType.ATM_MIDNIGHT.value, []))
+        row[3] = "\n".join(aggregates.get(TaskType.SYSAID_MAKER.value, []))
+        row[4] = "\n".join(aggregates.get(TaskType.SYSAID_CHECKER.value, []))
         ws.append(row)
 
     # Autosize columns
@@ -209,6 +216,9 @@ def export_to_pdf(schedule: Schedule, file_path: str):
     elements.append(Spacer(1, 0.2*inch))
     
     # Group assignments by date
+    def _tt_value(t):
+        return t if isinstance(t, str) else t.value
+
     by_date = {}
     for a in schedule.assignments:
         d = a.date
@@ -219,22 +229,17 @@ def export_to_pdf(schedule: Schedule, file_path: str):
     
     for day in sorted(by_date.keys()):
         row = [day.strftime('%Y-%m-%d (%A)'), '', '', '', '']
-        aggregates = {
-            TaskType.ATM_MORNING: [],
-            TaskType.ATM_MIDNIGHT: [],
-            TaskType.SYSAID_MAKER: [],
-            TaskType.SYSAID_CHECKER: []
-        }
+        aggregates: dict[str, list] = {}
         for a in by_date[day]:
             display = a.assignee.name
             if a.shift_label:
                 display = f"{display} ({a.shift_label})"
-            aggregates.setdefault(a.task_type, []).append(display)
+            aggregates.setdefault(_tt_value(a.task_type), []).append(display)
         
-        row[1] = '\n'.join(aggregates.get(TaskType.ATM_MORNING, [])) or '-'
-        row[2] = '\n'.join(aggregates.get(TaskType.ATM_MIDNIGHT, [])) or '-'
-        row[3] = '\n'.join(aggregates.get(TaskType.SYSAID_MAKER, [])) or '-'
-        row[4] = '\n'.join(aggregates.get(TaskType.SYSAID_CHECKER, [])) or '-'
+        row[1] = '\n'.join(aggregates.get(TaskType.ATM_MORNING.value, [])) or '-'
+        row[2] = '\n'.join(aggregates.get(TaskType.ATM_MIDNIGHT.value, [])) or '-'
+        row[3] = '\n'.join(aggregates.get(TaskType.SYSAID_MAKER.value, [])) or '-'
+        row[4] = '\n'.join(aggregates.get(TaskType.SYSAID_CHECKER.value, [])) or '-'
         data.append(row)
     
     # Create table

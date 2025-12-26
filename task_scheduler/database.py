@@ -1,7 +1,7 @@
 """Database models and configuration."""
 
 from datetime import date, datetime
-from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.types import TypeDecorator, VARCHAR
@@ -82,7 +82,8 @@ class AssignmentDB(Base):
     __tablename__ = "assignments"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_type = Column(SQLEnum(TaskType), nullable=False)
+    # Store task type as a string so dynamic/configurable task types can be recorded
+    task_type = Column(String, nullable=False)
     member_id = Column(String, ForeignKey("team_members.id"), nullable=False)
     assignment_date = Column(Date, nullable=False)
     week_start = Column(Date, nullable=True)  # For SysAid weekly assignments
@@ -102,7 +103,8 @@ class FairnessCount(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     member_id = Column(String, ForeignKey("team_members.id"), nullable=False)
-    task_type = Column(SQLEnum(TaskType), nullable=False)
+    # Store the task identifier as string (e.g. ATM_MORNING or custom task name)
+    task_type = Column(String, nullable=False)
     count = Column(Integer, default=0)
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)
@@ -205,8 +207,10 @@ class Database:
                 "DATABASE_URL is not set. Please create a .env with your Postgres URL, e.g. "
                 "DATABASE_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/iss_task_schedule"
             )
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        self.engine = create_engine(url, connect_args=connect_args)
+        # Enforce using PostgreSQL for the application DB. Do not apply SQLite-specific args.
+        if not url.startswith("postgresql"):
+            raise RuntimeError("Only PostgreSQL is supported in production. Set DATABASE_URL to a postgresql+psycopg2 URL.")
+        self.engine = create_engine(url)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
     
     def create_tables(self):
@@ -242,56 +246,8 @@ class Database:
                     conn.exec_driver_sql(
                         "ALTER TABLE IF EXISTS swap_requests ADD COLUMN IF NOT EXISTS peer_decided_at TIMESTAMP"
                     )
-                elif dialect == "sqlite":
-                    # SQLite: adding with default is fine; ignore error if exists
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE team_members ADD COLUMN email VARCHAR"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE assignments ADD COLUMN shift_label VARCHAR"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE assignments ADD COLUMN custom_task_name VARCHAR"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE assignments ADD COLUMN custom_task_shift VARCHAR"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE assignments ADD COLUMN recurrence VARCHAR"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE swap_requests ADD COLUMN peer_decision VARCHAR"
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        conn.exec_driver_sql(
-                            "ALTER TABLE swap_requests ADD COLUMN peer_decided_at TIMESTAMP"
-                        )
-                    except Exception:
-                        pass
+                # Only PostgreSQL migrations are applied here.
+                # If you manage schema via Alembic/migrations, prefer that mechanism.
         except Exception:
             # Never block startup on best-effort migration
             pass
@@ -320,8 +276,7 @@ def _get_db_instance():
                 f"{str(e)}\n\n"
                 "To fix this:\n"
                 "1. Create a .env file in the project root\n"
-                "2. Add: DATABASE_URL=sqlite:///./task_scheduler.db\n"
-                "   OR for PostgreSQL: DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/dbname"
+                "2. Add: DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/dbname"
             ) from e
     return _db_instance
 

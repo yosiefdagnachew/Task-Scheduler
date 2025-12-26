@@ -26,6 +26,7 @@ export default function ScheduleView() {
   const [loading, setLoading] = useState(true);
   const [groupedAssignments, setGroupedAssignments] = useState({});
   const [dynamicAssignments, setDynamicAssignments] = useState([]);
+  const [taskFilter, setTaskFilter] = useState('all');
   const [team, setTeam] = useState([]);
   const { me } = useAuth();
   const isAdmin = me?.role === 'admin';
@@ -42,14 +43,14 @@ export default function ScheduleView() {
       const defaultTaskTypes = new Set(['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER']);
       const grouped = {};
       const dynamicOnly = [];
+      // New API stores dynamic tasks using their task identifier string (task_type)
       response.data.assignments.forEach(assignment => {
+        const date = assignment.assignment_date;
         if (defaultTaskTypes.has(assignment.task_type)) {
-          const date = assignment.assignment_date;
-          if (!grouped[date]) {
-            grouped[date] = [];
-          }
+          if (!grouped[date]) grouped[date] = [];
           grouped[date].push(assignment);
-        } else if (assignment.task_type === 'DYNAMIC') {
+        } else {
+          // Any non-default task_type is considered a custom/dynamic task
           dynamicOnly.push(assignment);
         }
       });
@@ -174,10 +175,9 @@ export default function ScheduleView() {
   const dynamicAssignmentsByTask = React.useMemo(() => {
     const groups = {};
     dynamicAssignments.forEach(item => {
-      const key = item.custom_task_name || 'Custom Task';
-      if (!groups[key]) {
-        groups[key] = [];
-      }
+      // Prefer the stored task_type (identifier); fall back to custom_task_name
+      const key = item.task_type || item.custom_task_name || 'Custom Task';
+      if (!groups[key]) groups[key] = [];
       groups[key].push(item);
     });
     Object.values(groups).forEach(items => {
@@ -247,13 +247,17 @@ export default function ScheduleView() {
     );
   };
 
-  const renderDynamicAssignmentsSection = () => {
+  const renderDynamicAssignmentsSection = (filterTask) => {
     if (dynamicAssignments.length === 0) return null;
+    const entries = Object.entries(dynamicAssignmentsByTask).filter(([taskName]) => {
+      return !filterTask || filterTask === 'all' || filterTask === taskName;
+    });
+    if (entries.length === 0) return null;
     return (
       <div className="mt-8 bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Custom Task Assignments</h3>
         <div className="space-y-4">
-          {Object.entries(dynamicAssignmentsByTask).map(([taskName, items]) => {
+          {entries.map(([taskName, items]) => {
             const recurrence = items[0]?.recurrence || 'custom';
             return (
               <div key={taskName} className="border rounded-lg p-4">
@@ -289,6 +293,13 @@ export default function ScheduleView() {
           </p>
         </div>
         <div className="space-x-2">
+          <select value={taskFilter} onChange={(e)=>setTaskFilter(e.target.value)} className="mr-2 px-2 py-1 border rounded">
+            <option value="all">All tasks</option>
+            <option value="default">Default (ATM/SysAid)</option>
+            {Object.keys(dynamicAssignmentsByTask).map(k => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
           {isAdmin && (
             <button
               onClick={async ()=>{
@@ -327,7 +338,7 @@ export default function ScheduleView() {
         </div>
       </div>
 
-      {hasDefaultAssignments && (
+      {(taskFilter === 'all' || taskFilter === 'default') && hasDefaultAssignments && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -372,7 +383,7 @@ export default function ScheduleView() {
         </div>
       )}
 
-      {renderDynamicAssignmentsSection()}
+      {renderDynamicAssignmentsSection(taskFilter === 'default' ? null : taskFilter)}
 
       {/* Assignment Summary & Fairness */}
       {hasDefaultAssignments && (

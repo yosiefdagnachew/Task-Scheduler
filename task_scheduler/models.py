@@ -53,8 +53,12 @@ class TeamMember:
 
 @dataclass
 class Assignment:
-    """Represents a task assignment to a team member."""
-    task_type: TaskType
+    """Represents a task assignment to a team member.
+
+    Note: `task_type` may be a `TaskType` enum for built-in tasks or a
+    string identifier for dynamic/configurable task types.
+    """
+    task_type: str | TaskType
     assignee: TeamMember
     date: date
     week_start: Optional[date] = None  # For SysAid weekly assignments
@@ -69,21 +73,26 @@ class Assignment:
 
 @dataclass
 class FairnessLedger:
-    """Tracks assignment counts for fairness calculations."""
-    member_counts: dict[str, dict[TaskType, int]] = field(default_factory=dict)
+    """Tracks assignment counts for fairness calculations.
+
+    `member_counts` maps member_id -> { task_identifier (str) -> count }.
+    """
+    member_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     fairness_window_days: int = 90  # Rolling window
     
-    def get_count(self, member_id: str, task_type: TaskType) -> int:
+    def get_count(self, member_id: str, task_type: str | TaskType) -> int:
         """Get assignment count for a member and task type."""
-        return self.member_counts.get(member_id, {}).get(task_type, 0)
+        key = task_type.value if isinstance(task_type, TaskType) else str(task_type)
+        return self.member_counts.get(member_id, {}).get(key, 0)
     
-    def increment(self, member_id: str, task_type: TaskType):
+    def increment(self, member_id: str, task_type: str | TaskType):
         """Increment count for a member and task type."""
+        key = task_type.value if isinstance(task_type, TaskType) else str(task_type)
         if member_id not in self.member_counts:
             self.member_counts[member_id] = {}
-        if task_type not in self.member_counts[member_id]:
-            self.member_counts[member_id][task_type] = 0
-        self.member_counts[member_id][task_type] += 1
+        if key not in self.member_counts[member_id]:
+            self.member_counts[member_id][key] = 0
+        self.member_counts[member_id][key] += 1
     
     def get_total_count(self, member_id: str) -> int:
         """Get total assignment count across all task types."""
@@ -109,7 +118,12 @@ class Schedule:
         """Get all rest days (days following ATM_MIDNIGHT assignments)."""
         rest_days = set()
         for assignment in self.assignments:
-            if assignment.task_type == TaskType.ATM_MIDNIGHT:
+            is_b_shift = False
+            if isinstance(assignment.task_type, TaskType):
+                is_b_shift = (assignment.task_type == TaskType.ATM_MIDNIGHT)
+            else:
+                is_b_shift = (str(assignment.task_type) == TaskType.ATM_MIDNIGHT.value)
+            if is_b_shift:
                 from datetime import timedelta
                 rest_day = assignment.date + timedelta(days=1)
                 rest_days.add(rest_day)

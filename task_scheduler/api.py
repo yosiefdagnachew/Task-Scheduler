@@ -249,6 +249,22 @@ def db_member_to_model(db_member: TeamMemberDB, session: Session) -> TeamMember:
         email=db_member.email
     )
 
+
+def _task_identifier(task_type_val) -> str:
+    """Normalize a task_type value to a string identifier for DB storage/queries.
+
+    Accepts either a TaskType enum or a plain string (for dynamic tasks).
+    """
+    from .models import TaskType as _TaskType
+    if isinstance(task_type_val, _TaskType):
+        return task_type_val.value
+    return str(task_type_val)
+
+
+def _is_enum_task_identifier(task_identifier: str) -> bool:
+    from .models import TaskType as _TaskType
+    return task_identifier in {t.value for t in _TaskType}
+
 # API Endpoints
 
 @app.get("/")
@@ -720,8 +736,9 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
     
     # Save assignments
     for assignment in schedule.assignments:
+        task_id = _task_identifier(assignment.task_type)
         db_assignment = AssignmentDB(
-            task_type=assignment.task_type,
+            task_type=task_id,
             member_id=assignment.assignee.id,
             assignment_date=assignment.date,
             week_start=assignment.week_start,
@@ -732,39 +749,39 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
         )
         session.add(db_assignment)
         # Update fairness ledger
-        if assignment.task_type == TaskType.DYNAMIC:
+        # Distinguish dynamic/custom tasks vs built-in enum tasks
+        if assignment.custom_task_name or (isinstance(assignment.task_type, str) and not _is_enum_task_identifier(assignment.task_type)):
+            tname = assignment.custom_task_name or task_id or "CUSTOM"
             fairness_count = session.query(DynamicFairnessCount).filter(
                 DynamicFairnessCount.member_id == assignment.assignee.id,
-                DynamicFairnessCount.task_name == (assignment.custom_task_name or "CUSTOM")
+                DynamicFairnessCount.task_name == tname
             ).first()
-            
             if not fairness_count:
                 fairness_count = DynamicFairnessCount(
                     member_id=assignment.assignee.id,
-                    task_name=assignment.custom_task_name or "CUSTOM",
+                    task_name=tname,
                     count=0,
                 )
                 session.add(fairness_count)
-            
             fairness_count.count += 1
             fairness_count.updated_at = date.today()
         else:
+            # Enum task stored by its identifier string
+            task_str = task_id
             fairness_count = session.query(FairnessCount).filter(
                 FairnessCount.member_id == assignment.assignee.id,
-                FairnessCount.task_type == assignment.task_type
+                FairnessCount.task_type == task_str
             ).first()
-            
             if not fairness_count:
                 from datetime import timedelta
                 fairness_count = FairnessCount(
                     member_id=assignment.assignee.id,
-                    task_type=assignment.task_type,
+                    task_type=task_str,
                     count=0,
                     period_start=date.today() - timedelta(days=90),
                     period_end=date.today()
                 )
                 session.add(fairness_count)
-            
             fairness_count.count += 1
             fairness_count.updated_at = date.today()
     
@@ -782,7 +799,7 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
         member = session.query(TeamMemberDB).filter(TeamMemberDB.id == a.member_id).first()
         assignment_responses.append({
             "id": a.id,
-            "task_type": a.task_type.value,
+            "task_type": a.task_type if isinstance(a.task_type, str) else a.task_type.value,
             "member_id": a.member_id,
             "member_name": member.name if member else "Unknown",
             "assignment_date": a.assignment_date,
@@ -876,7 +893,7 @@ async def get_schedule(schedule_id: int, session: Session = Depends(get_db), use
         member = session.query(TeamMemberDB).filter(TeamMemberDB.id == a.member_id).first()
         assignment_responses.append({
             "id": a.id,
-            "task_type": a.task_type.value,
+            "task_type": a.task_type if isinstance(a.task_type, str) else a.task_type.value,
             "member_id": a.member_id,
             "member_name": member.name if member else "Unknown",
             "assignment_date": a.assignment_date.isoformat(),
@@ -991,7 +1008,7 @@ async def get_fairness_counts(session: Session = Depends(get_db)):
             # Count assignments in the last 90 days
             assignment_count = session.query(AssignmentDB).filter(
                 AssignmentDB.member_id == member.id,
-                AssignmentDB.task_type == task_type,
+                AssignmentDB.task_type == task_type.value,
                 AssignmentDB.assignment_date >= cutoff_date
             ).count()
             counts[task_type.value] = assignment_count
