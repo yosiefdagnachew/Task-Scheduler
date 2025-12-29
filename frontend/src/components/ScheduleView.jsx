@@ -31,6 +31,7 @@ function ScheduleView() {
   const [team, setTeam] = useState([]);
   const { me } = useAuth();
   const isAdmin = me?.role === 'admin';
+  const DEFAULT_TASK_TYPES = new Set(['ATM_MORNING', 'ATM_MIDNIGHT', 'SYSAID_MAKER', 'SYSAID_CHECKER']);
 
   const dynamicAssignmentsByTask = React.useMemo(() => {
     const groups = {};
@@ -155,6 +156,7 @@ function ScheduleView() {
   }
 
   const hasDefaultAssignments = Object.keys(groupedAssignments).length > 0;
+  const isDynamicOnly = schedule.assignments.length > 0 && schedule.assignments.every(a => !DEFAULT_TASK_TYPES.has(a.task_type));
   const dates = hasDefaultAssignments
     ? eachDayOfInterval({
         start: parseISO(schedule.start_date),
@@ -346,7 +348,7 @@ function ScheduleView() {
         </div>
       </div>
 
-      {(taskFilter === 'all' || taskFilter === 'default') && hasDefaultAssignments && (
+      {(!isDynamicOnly && (taskFilter === 'all' || taskFilter === 'default') && hasDefaultAssignments) && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -394,7 +396,7 @@ function ScheduleView() {
       {renderDynamicAssignmentsSection(taskFilter === 'default' ? null : taskFilter)}
 
       {/* Assignment Summary & Fairness */}
-      {hasDefaultAssignments && (
+      {(!isDynamicOnly && hasDefaultAssignments) && (
         <div className="mt-6 bg-white shadow rounded-lg p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Assignment Summary</h3>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -417,10 +419,12 @@ function ScheduleView() {
         </div>
       )}
 
-      <div className="mt-6 bg-white shadow rounded-lg p-6">
-        <h4 className="font-medium mb-2">Fairness Score (variance and spread)</h4>
-        <FairnessDetails assignments={schedule.assignments} />
-      </div>
+      {!isDynamicOnly && (
+        <div className="mt-6 bg-white shadow rounded-lg p-6">
+          <h4 className="font-medium mb-2">Fairness Score (variance and spread)</h4>
+          <FairnessDetails assignments={schedule.assignments} />
+        </div>
+      )}
     </div>
   );
 }

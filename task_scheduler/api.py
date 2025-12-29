@@ -739,6 +739,7 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
         task_id = _task_identifier(assignment.task_type)
         db_assignment = AssignmentDB(
             task_type=task_id,
+            schedule_id=db_schedule.id,
             member_id=assignment.assignee.id,
             assignment_date=assignment.date,
             week_start=assignment.week_start,
@@ -788,10 +789,9 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
     session.commit()
     session.refresh(db_schedule)
     
-    # Build response
+    # Build response - return only assignments created for this schedule
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= request.start_date,
-        AssignmentDB.assignment_date <= request.end_date
+        AssignmentDB.schedule_id == db_schedule.id
     ).all()
     
     assignment_responses = []
@@ -802,8 +802,8 @@ async def generate_schedule(request: ScheduleGenerateRequest, session: Session =
             "task_type": a.task_type if isinstance(a.task_type, str) else a.task_type.value,
             "member_id": a.member_id,
             "member_name": member.name if member else "Unknown",
-            "assignment_date": a.assignment_date,
-            "week_start": a.week_start,
+            "assignment_date": a.assignment_date.isoformat(),
+            "week_start": a.week_start.isoformat() if a.week_start else None,
             "shift_label": a.shift_label,
             "custom_task_name": a.custom_task_name,
             "custom_task_shift": a.custom_task_shift,
@@ -841,10 +841,9 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
-    # Fetch assignments in range
+    # Fetch assignments that belong to this schedule
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
+        AssignmentDB.schedule_id == schedule_id
     ).all()
     
     assignment_ids = [a.id for a in assignments]
@@ -884,8 +883,7 @@ async def get_schedule(schedule_id: int, session: Session = Depends(get_db), use
         raise HTTPException(status_code=404, detail="Schedule not found")
     
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
+        AssignmentDB.schedule_id == schedule_id
     ).all()
     
     assignment_responses = []
@@ -898,7 +896,10 @@ async def get_schedule(schedule_id: int, session: Session = Depends(get_db), use
             "member_name": member.name if member else "Unknown",
             "assignment_date": a.assignment_date.isoformat(),
             "week_start": a.week_start.isoformat() if a.week_start else None,
-            "shift_label": a.shift_label
+            "shift_label": a.shift_label,
+            "custom_task_name": a.custom_task_name,
+            "custom_task_shift": a.custom_task_shift,
+            "recurrence": a.recurrence
         })
     
     return {
@@ -922,8 +923,7 @@ async def export_schedule_csv(schedule_id: int, session: Session = Depends(get_d
     members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
     
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
+        AssignmentDB.schedule_id == schedule_id
     ).all()
     
     schedule_assignments = []
@@ -963,8 +963,7 @@ async def export_schedule_xlsx(schedule_id: int, session: Session = Depends(get_
     members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
 
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
+        AssignmentDB.schedule_id == schedule_id
     ).all()
 
     schedule_assignments = []
@@ -1326,8 +1325,7 @@ async def export_schedule_excel(schedule_id: int, session: Session = Depends(get
     members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
     
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
+        AssignmentDB.schedule_id == schedule_id
     ).all()
     
     schedule_assignments = []
@@ -1365,8 +1363,7 @@ async def export_schedule_pdf(schedule_id: int, session: Session = Depends(get_d
     members_dict = {m.id: db_member_to_model(m, session) for m in db_members}
     
     assignments = session.query(AssignmentDB).filter(
-        AssignmentDB.assignment_date >= schedule.start_date,
-        AssignmentDB.assignment_date <= schedule.end_date
+        AssignmentDB.schedule_id == schedule_id
     ).all()
     
     schedule_assignments = []

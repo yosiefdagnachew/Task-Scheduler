@@ -84,6 +84,8 @@ class AssignmentDB(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     # Store task type as a string so dynamic/configurable task types can be recorded
     task_type = Column(String, nullable=False)
+    # Link assignment to the schedule it belongs to
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True)
     member_id = Column(String, ForeignKey("team_members.id"), nullable=False)
     assignment_date = Column(Date, nullable=False)
     week_start = Column(Date, nullable=True)  # For SysAid weekly assignments
@@ -95,6 +97,7 @@ class AssignmentDB(Base):
     
     # Relationships
     assignee = relationship("TeamMemberDB", back_populates="assignments")
+    schedule = relationship("ScheduleDB", back_populates="assignments")
 
 
 class FairnessCount(Base):
@@ -137,6 +140,8 @@ class ScheduleDB(Base):
     created_at = Column(DateTime, default=datetime.now)
     created_by = Column(String, nullable=True)
     status = Column(String, default="draft")  # draft, published, archived
+    # Back-reference to assignments
+    assignments = relationship("AssignmentDB", back_populates="schedule", cascade="all, delete-orphan")
 
 
 class TaskTypeDef(Base):
@@ -239,6 +244,9 @@ class Database:
                     )
                     conn.exec_driver_sql(
                         "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS recurrence VARCHAR"
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE IF EXISTS assignments ADD COLUMN IF NOT EXISTS schedule_id INTEGER"
                     )
                     conn.exec_driver_sql(
                         "ALTER TABLE IF EXISTS swap_requests ADD COLUMN IF NOT EXISTS peer_decision VARCHAR"
