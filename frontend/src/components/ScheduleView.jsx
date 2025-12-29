@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ErrorBoundary from './ErrorBoundary';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Download, ArrowLeft, Trash2 } from 'lucide-react';
 import { getSchedule, exportScheduleCSV, exportScheduleExcel, exportSchedulePDF, exportScheduleXLSX, updateAssignment, getTeamMembers, deleteSchedule } from '../services/api';
@@ -19,7 +20,7 @@ const TASK_LABELS = {
   SYSAID_CHECKER: 'SysAid Checker'
 };
 
-export default function ScheduleView() {
+function ScheduleView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [schedule, setSchedule] = useState(null);
@@ -30,6 +31,19 @@ export default function ScheduleView() {
   const [team, setTeam] = useState([]);
   const { me } = useAuth();
   const isAdmin = me?.role === 'admin';
+
+  const dynamicAssignmentsByTask = React.useMemo(() => {
+    const groups = {};
+    dynamicAssignments.forEach(item => {
+      const key = item.task_type || item.custom_task_name || 'Custom Task';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(item);
+    });
+    Object.values(groups).forEach(items => {
+      items.sort((a, b) => new Date(a.assignment_date) - new Date(b.assignment_date));
+    });
+    return groups;
+  }, [dynamicAssignments]);
 
   useEffect(() => {
     loadSchedule();
@@ -172,23 +186,19 @@ export default function ScheduleView() {
     );
   };
 
-  const dynamicAssignmentsByTask = React.useMemo(() => {
-    const groups = {};
-    dynamicAssignments.forEach(item => {
-      // Prefer the stored task_type (identifier); fall back to custom_task_name
-      const key = item.task_type || item.custom_task_name || 'Custom Task';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(item);
-    });
-    Object.values(groups).forEach(items => {
-      items.sort((a, b) => new Date(a.assignment_date) - new Date(b.assignment_date));
-    });
-    return groups;
-  }, [dynamicAssignments]);
 
   const recurrenceLabel = (recurrence) => {
     if (!recurrence) return 'Custom';
     return recurrence.charAt(0).toUpperCase() + recurrence.slice(1);
+  };
+
+  const safeFormat = (dateStr, fmt) => {
+    try {
+      if (!dateStr) return '';
+      return format(parseISO(dateStr), fmt);
+    } catch (e) {
+      return String(dateStr);
+    }
   };
 
   const renderDynamicTaskBody = (items, recurrence) => {
@@ -207,7 +217,7 @@ export default function ScheduleView() {
             .sort((a, b) => new Date(a[0]) - new Date(b[0]))
             .map(([weekKey, roles]) => (
               <div key={weekKey} className="bg-gray-50 border rounded-lg p-3">
-                <div className="text-xs text-gray-500">Week of {format(parseISO(weekKey), 'MMM dd')}</div>
+                <div className="text-xs text-gray-500">Week of {safeFormat(weekKey, 'MMM dd')}</div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {Object.entries(roles).map(([role, members]) => (
                     <div key={role}>
@@ -236,8 +246,8 @@ export default function ScheduleView() {
         {Object.entries(datesMap)
           .sort((a, b) => new Date(a[0]) - new Date(b[0]))
           .map(([dateStr, entries]) => (
-            <div key={dateStr} className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b last:border-b-0 pb-2">
-              <div className="text-sm text-gray-500">{format(parseISO(dateStr), 'EEE, MMM dd')}</div>
+              <div key={dateStr} className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b last:border-b-0 pb-2">
+              <div className="text-sm text-gray-500">{safeFormat(dateStr, 'EEE, MMM dd')}</div>
               <div className="text-sm font-medium text-gray-900">
                 {entries.map(entry => `${entry.member_name}${entry.custom_task_shift ? ` (${entry.custom_task_shift})` : ''}`).join(', ')}
               </div>
@@ -289,7 +299,7 @@ export default function ScheduleView() {
           </button>
           <h2 className="text-2xl font-bold text-gray-900">Schedule View</h2>
           <p className="mt-1 text-sm text-gray-500">
-            {format(parseISO(schedule.start_date), 'MMM dd')} - {format(parseISO(schedule.end_date), 'MMM dd, yyyy')}
+            {safeFormat(schedule.start_date, 'MMM dd')} - {safeFormat(schedule.end_date, 'MMM dd, yyyy')}
           </p>
         </div>
         <div className="space-x-2">
@@ -300,18 +310,16 @@ export default function ScheduleView() {
               <option key={k} value={k}>{k}</option>
             ))}
           </select>
-          {isAdmin && (
-            <button
-              onClick={async ()=>{
-                if (!window.confirm('Delete this schedule? This cannot be undone.')) return;
-                try { await deleteSchedule(id); navigate('/'); } catch(e){ alert('Failed to delete'); }
-              }}
-              className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Delete
-            </button>
-          )}
+          <button
+            onClick={async ()=>{
+              if (!window.confirm('Delete this schedule? This cannot be undone.')) return;
+              try { await deleteSchedule(id); navigate('/'); } catch(e){ alert('Failed to delete'); }
+            }}
+            className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete
+          </button>
           <button
             onClick={handleExport}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
@@ -416,6 +424,14 @@ export default function ScheduleView() {
     </div>
   );
 }
+
+const WrappedScheduleView = (props) => (
+  <ErrorBoundary>
+    <ScheduleView {...props} />
+  </ErrorBoundary>
+);
+
+export default WrappedScheduleView;
 
 function FairnessDetails({ assignments }) {
   // Compute per-member counts

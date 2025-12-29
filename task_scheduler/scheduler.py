@@ -178,8 +178,30 @@ class Scheduler:
                 rest_next_day = shift.get("rest_next_day", False)
 
                 eligible = self._get_eligible_members(members, current_date, task_type, assignments)
-                # Exclude members who already have SysAid assignments this week
-                eligible = [m for m in eligible if m.id not in sysaid_members_this_week]
+
+                # If this shift creates a rest day (B-shift), avoid assigning members
+                # whose rest day would overlap with a SysAid assignment. Previously
+                # we excluded all SysAid members for the whole week which caused
+                # shortages; instead only block those with an actual conflict on
+                # the computed rest day.
+                if rest_next_day:
+                    rest_day = calculate_rest_day(current_date)
+                    if rest_day:
+                        # collect members who have SysAid assignment on the rest day
+                        sysaid_on_rest = set()
+                        for a in existing_schedule.assignments:
+                            a_task = a.task_type
+                            a_task_is_sys = False
+                            if isinstance(a_task, TaskType):
+                                a_task_is_sys = a_task in {TaskType.SYSAID_MAKER, TaskType.SYSAID_CHECKER}
+                            else:
+                                a_task_is_sys = str(a_task) in {TaskType.SYSAID_MAKER.value, TaskType.SYSAID_CHECKER.value}
+                            if a_task_is_sys and a.date == rest_day:
+                                sysaid_on_rest.add(a.assignee.id)
+
+                        eligible = [m for m in eligible if m.id not in sysaid_on_rest]
+
+                # Do not assign members already assigned today
                 eligible = [m for m in eligible if m.id not in assigned_today]
 
                 if not eligible:
