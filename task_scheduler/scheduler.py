@@ -778,8 +778,10 @@ class Scheduler:
             if task_type == TaskType.ATM_MIDNIGHT:
                 recent_b_assignments = [
                     a for a in existing_assignments
-                    if (a.task_type == TaskType.ATM_MIDNIGHT) or (isinstance(a.task_type, str) and a.task_type == TaskType.ATM_MIDNIGHT.value)
-                    and a.assignee.id == member.id
+                    if (
+                        (a.task_type == TaskType.ATM_MIDNIGHT) or 
+                        (isinstance(a.task_type, str) and a.task_type == TaskType.ATM_MIDNIGHT.value)
+                    ) and a.assignee.id == member.id
                     and (check_date - a.date).days <= self.config.atm_b_cooldown_days
                 ]
                 if recent_b_assignments:
