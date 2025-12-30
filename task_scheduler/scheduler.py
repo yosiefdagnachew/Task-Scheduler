@@ -1,6 +1,7 @@
 """Core scheduling logic for ATM and SysAid tasks."""
 
 from datetime import date, timedelta
+import calendar
 from typing import List, Optional, Set, Tuple, Dict, Any
 from .models import TeamMember, Assignment, TaskType, Schedule, FairnessLedger
 from .config import SchedulingConfig
@@ -553,16 +554,94 @@ class Scheduler:
         """Schedule a monthly task type from database with equal distribution."""
         assignments = []
         
-        # Get day of month from rules or default to 1st
-        day_of_month = task_type.rules_json.get("day_of_month", 1) if task_type.rules_json else 1
-        
-        # First, collect all dates that need assignments
+        # Determine scheduling day: can be an integer day (1..31), negative (e.g. -1 means last day),
+        # or the string 'EOM' / 'eom' to indicate end-of-month. Default to 1st.
+        raw_dom = None
+        if task_type.rules_json:
+            raw_dom = task_type.rules_json.get("day_of_month", None)
+            # Some task definitions may use a boolean flag for end-of-month
+            if raw_dom is None and task_type.rules_json.get("eom"):
+                raw_dom = "EOM"
+        if raw_dom is None:
+            day_of_month = 1
+            eom = False
+        else:
+            if isinstance(raw_dom, str) and raw_dom.strip().upper() == "EOM":
+                eom = True
+                day_of_month = None
+            elif isinstance(raw_dom, int) and raw_dom < 0:
+                # negative indexing like -1 means last day
+                eom = True
+                day_of_month = None
+            else:
+                try:
+                    day_of_month = int(raw_dom)
+                    eom = False
+                except Exception:
+                    # fallback to 1st
+                    day_of_month = 1
+                    eom = False
+
+        # First, collect all dates that need assignments by iterating months
         dates_to_schedule = []
-        current_date = start_date
-        while current_date <= end_date:
-            if current_date.day == day_of_month:
-                dates_to_schedule.append(current_date)
-            current_date += timedelta(days=1)
+        year = start_date.year
+        month = start_date.month
+        # iterate months until we pass end_date
+        cur = date(year, month, 1)
+        while cur <= end_date:
+            if eom:
+                last_day = calendar.monthrange(cur.year, cur.month)[1]
+                candidate = date(cur.year, cur.month, last_day)
+            else:
+                # ensure day exists in this month; if not, skip (e.g., 31st on short months)
+                try:
+                    candidate = date(cur.year, cur.month, day_of_month)
+                except ValueError:
+                    # invalid day for month
+                    cur = (cur.replace(day=1) + timedelta(days=32)).replace(day=1)
+                    continue
+
+            # If candidate falls on weekend, adjust to previous Friday or next Monday
+            adjusted = candidate
+            # Saturday == 5, Sunday == 6
+            if candidate.weekday() == 5:
+                # Saturday: prefer previous Friday, else next Monday
+                prev_friday = candidate - timedelta(days=1)
+                next_monday = candidate + timedelta(days=2)
+                if prev_friday >= start_date:
+                    adjusted = prev_friday
+                elif next_monday <= end_date:
+                    adjusted = next_monday
+                else:
+                    # no valid fallback within range
+                    self.audit.log(f"{candidate} falls on Saturday and no fallback within range; skipping")
+                    adjusted = None
+            elif candidate.weekday() == 6:
+                # Sunday: prefer next Monday, else previous Friday
+                next_monday = candidate + timedelta(days=1)
+                prev_friday = candidate - timedelta(days=2)
+                if next_monday <= end_date:
+                    adjusted = next_monday
+                elif prev_friday >= start_date:
+                    adjusted = prev_friday
+                else:
+                    self.audit.log(f"{candidate} falls on Sunday and no fallback within range; skipping")
+                    adjusted = None
+
+            if adjusted and adjusted >= start_date and adjusted <= end_date:
+                # avoid duplicates if adjustment causes same date twice
+                if adjusted not in dates_to_schedule:
+                    if adjusted != candidate:
+                        self.audit.log(f"Adjusted monthly candidate {candidate} -> {adjusted}")
+                    dates_to_schedule.append(adjusted)
+
+            # advance to first of next month
+            next_month = cur.month + 1
+            next_year = cur.year
+            if next_month > 12:
+                next_month = 1
+                next_year += 1
+            cur = date(next_year, next_month, 1)
         
         if not dates_to_schedule:
             return assignments
@@ -716,6 +795,50 @@ class Scheduler:
         else:
             selected = best_members[0]
         
+        return selected
+
+    def _select_assignee_for_dynamic_task_improved(
+        self,
+        eligible_members: List[TeamMember],
+        task_type: DynamicTaskType,
+        assignment_date: date,
+        already_selected: List[TeamMember]
+    ) -> TeamMember:
+        """Improved selection for dynamic tasks.
+
+        Prioritizes members with lower dynamic fairness count for the task type,
+        then by total ledger count. Avoids members already in `already_selected`.
+        Uses deterministic tie-breaker based on date and task name.
+        """
+        if not eligible_members:
+            raise ValueError("No eligible members available")
+
+        # Filter out any already_selected members first if possible
+        remaining = [m for m in eligible_members if m.id not in {s.id for s in already_selected}]
+        candidates = remaining if remaining else eligible_members
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        scores = []
+        for member in candidates:
+            dyn_count = self._get_fairness_count_for_dynamic_task(member.id, task_type)
+            total = self.ledger.get_total_count(member.id)
+            # lower is better
+            scores.append((dyn_count, total, member))
+
+        scores.sort(key=lambda x: (x[0], x[1]))
+        best_score = scores[0][0]
+        best_members = [s[2] for s in scores if s[0] == best_score]
+
+        if len(best_members) > 1:
+            tie_breaker = hash((assignment_date.isoformat(), task_type.name)) % len(best_members)
+            selected = best_members[tie_breaker]
+            self.audit.log(f"Tie-break for {task_type.name} on {assignment_date}: selected {selected.name} from {len(best_members)} candidates")
+        else:
+            selected = best_members[0]
+
+        self.audit.log(f"Selected {selected.name} for {task_type.name} on {assignment_date} (dyn_count={self._get_fairness_count_for_dynamic_task(selected.id, task_type)})")
         return selected
     
     def _get_fairness_count_for_dynamic_task(self, member_id: str, task_type: DynamicTaskType) -> int:
