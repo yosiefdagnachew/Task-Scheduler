@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart3, RefreshCw, Download } from 'lucide-react';
-import { getFairnessCounts } from '../services/api';
+import { getFairnessCounts, recalcFairness } from '../services/api';
 import api from '../services/api';
 
 export default function FairnessView() {
@@ -44,6 +44,20 @@ export default function FairnessView() {
     }
   };
 
+  const handleRecalculate = async () => {
+    try {
+      setRefreshing(true);
+      await recalcFairness();
+      await loadFairness();
+      alert('Fairness recalculated successfully');
+    } catch (error) {
+      console.error('Error recalculating fairness:', error);
+      alert('Failed to recalculate fairness');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   if (loading) {
     return <div className="text-center py-12">Loading...</div>;
   }
@@ -75,6 +89,14 @@ export default function FairnessView() {
             <Download className="w-4 h-4 mr-2" />
             Export PDF
           </button>
+            <button
+              onClick={handleRecalculate}
+              disabled={refreshing}
+              className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-all duration-200 hover:scale-105"
+            >
+              <BarChart3 className="w-4 h-4 mr-2" />
+              Recalculate
+            </button>
         </div>
       </div>
 

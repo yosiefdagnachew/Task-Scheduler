@@ -882,10 +882,97 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
             AssignmentDB.id.in_(assignment_ids)
         ).delete(synchronize_session=False)
 
+    # Also handle orphaned assignments (no schedule_id) that fall within this schedule's date range
+    # These may be legacy rows created before schedule_id was tracked; remove them as they effectively belong to this schedule
+    orphaned = session.query(AssignmentDB).filter(
+        (AssignmentDB.schedule_id == None) | (AssignmentDB.schedule_id == 0),
+        AssignmentDB.assignment_date >= schedule.start_date,
+        AssignmentDB.assignment_date <= schedule.end_date
+    ).all()
+    orphan_ids = [o.id for o in orphaned]
+    if orphaned:
+        for a in orphaned:
+            if a.custom_task_name or (isinstance(a.task_type, str) and a.task_type not in {t.value for t in TaskType}):
+                tname = a.custom_task_name or a.task_type
+                dfc = session.query(DynamicFairnessCount).filter(
+                    DynamicFairnessCount.member_id == a.member_id,
+                    DynamicFairnessCount.task_name == tname
+                ).first()
+                if dfc and dfc.count and dfc.count > 0:
+                    dfc.count -= 1
+                    dfc.updated_at = date.today()
+            else:
+                fc = session.query(FairnessCount).filter(
+                    FairnessCount.member_id == a.member_id,
+                    FairnessCount.task_type == a.task_type
+                ).first()
+                if fc and fc.count and fc.count > 0:
+                    fc.count -= 1
+                    fc.updated_at = date.today()
+        session.query(AssignmentDB).filter(AssignmentDB.id.in_(orphan_ids)).delete(synchronize_session=False)
+
     # Delete schedule
     session.delete(schedule)
     session.commit()
     return {"message": "Schedule deleted"}
+
+
+@app.post("/api/fairness/recalculate")
+async def recalculate_fairness(session: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Recalculate fairness counters from assignments within the configured rolling window."""
+    try:
+        try:
+            config = SchedulingConfig.from_yaml("data/config.yaml")
+            window_days = getattr(config, 'fairness_window_days', 90)
+        except:
+            window_days = 90
+
+        from datetime import timedelta
+        cutoff = date.today() - timedelta(days=window_days)
+
+        # Rebuild counts transactionally
+        with session.begin():
+            # Clear existing counters
+            session.query(FairnessCount).delete(synchronize_session=False)
+            session.query(DynamicFairnessCount).delete(synchronize_session=False)
+
+            # Query relevant assignments
+            rows = session.query(AssignmentDB.member_id, AssignmentDB.task_type, AssignmentDB.custom_task_name).filter(
+                AssignmentDB.assignment_date >= cutoff
+            ).all()
+
+            enum_task_values = {t.value for t in TaskType}
+
+            for member_id, task_type, custom_name in rows:
+                if custom_name or (isinstance(task_type, str) and task_type not in enum_task_values):
+                    tname = custom_name or task_type or 'CUSTOM'
+                    dfc = session.query(DynamicFairnessCount).filter(
+                        DynamicFairnessCount.member_id == member_id,
+                        DynamicFairnessCount.task_name == tname
+                    ).first()
+                    if not dfc:
+                        dfc = DynamicFairnessCount(member_id=member_id, task_name=tname, count=0, updated_at=date.today())
+                        session.add(dfc)
+                    dfc.count = (dfc.count or 0) + 1
+                    dfc.updated_at = date.today()
+                else:
+                    task_str = task_type
+                    fc = session.query(FairnessCount).filter(
+                        FairnessCount.member_id == member_id,
+                        FairnessCount.task_type == task_str
+                    ).first()
+                    if not fc:
+                        fc = FairnessCount(member_id=member_id, task_type=task_str, count=0, period_start=date.today()-timedelta(days=window_days), period_end=date.today())
+                        session.add(fc)
+                    fc.count = (fc.count or 0) + 1
+                    fc.updated_at = date.today()
+
+        return {"message": "Fairness recalculated", "window_days": window_days}
+    except Exception as e:
+        import traceback
+        print(f"Failed to recalculate fairness: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/schedules/{schedule_id}")
 async def get_schedule(schedule_id: int, session: Session = Depends(get_db), user: User = Depends(get_current_user)):
