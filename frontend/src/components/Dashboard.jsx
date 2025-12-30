@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Users, Plus, Eye } from 'lucide-react';
-import { getSchedules, getTeamMembers } from '../services/api';
+import { Calendar, Users, Plus, Eye, Trash } from 'lucide-react';
+import { getSchedules, getTeamMembers, deleteSchedule } from '../services/api';
 import { format } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 
@@ -9,6 +9,7 @@ export default function Dashboard() {
   const [schedules, setSchedules] = useState([]);
   const [teamCount, setTeamCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const { me } = useAuth();
   const isAdmin = me?.role === 'admin';
 
@@ -43,6 +44,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDelete = async (scheduleId) => {
+    if (!isAdmin) return;
+    setConfirmDeleteId(scheduleId);
   };
 
   if (loading) {
@@ -168,7 +174,16 @@ export default function Dashboard() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                           {format(new Date(schedule.created_at), 'MMM dd, yyyy')}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDelete(schedule.id)}
+                              className="inline-flex items-center px-3 py-1.5 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-200"
+                            >
+                              <Trash className="w-4 h-4 mr-1" />
+                              Delete
+                            </button>
+                          )}
                           <Link
                             to={`/schedule/${schedule.id}`}
                             className="inline-flex items-center px-3 py-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-all duration-200"
@@ -186,6 +201,28 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+      {/* Confirm Delete Modal */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+          <div className="relative card w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4">Delete Schedule</h3>
+            <p className="text-sm text-gray-700 mb-6">Are you sure you want to delete schedule #{confirmDeleteId}? This action cannot be undone.</p>
+            <div className="flex justify-end space-x-3">
+              <button className="btn-secondary" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+              <button className="btn-danger" onClick={async () => {
+                try {
+                  await deleteSchedule(confirmDeleteId);
+                  setConfirmDeleteId(null);
+                  await loadData();
+                } catch (e) {
+                  console.error('Failed to delete schedule', e);
+                  alert(e.response?.data?.detail || 'Failed to delete schedule');
+                }
+              }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

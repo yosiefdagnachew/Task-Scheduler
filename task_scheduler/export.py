@@ -22,25 +22,24 @@ def export_to_csv(schedule: Schedule, file_path: str):
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
     with open(file_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['Date', 'Task Type', 'Assignee', 'Week Start (SysAid)'])
+        writer.writerow(['Date', 'Task', 'Role', 'Assignee', 'Week Start (SysAid)'])
         
-        # Sort by date, then by task type (handle string identifiers for dynamic tasks)
+        # Write one row per assignment with Task and Role columns for dynamic tasks
         def _tt_value(t):
             return t if isinstance(t, str) else t.value
 
-        sorted_assignments = sorted(
-            schedule.assignments,
-            key=lambda a: (a.date, _tt_value(a.task_type))
-        )
-        
+        sorted_assignments = sorted(schedule.assignments, key=lambda a: (a.date, _tt_value(a.task_type)))
         for assignment in sorted_assignments:
             week_start_str = assignment.week_start.isoformat() if assignment.week_start else ""
             assignee_display = assignment.assignee.name
-            if assignment.shift_label:
-                assignee_display = f"{assignee_display} ({assignment.shift_label})"
+            role = assignment.custom_task_shift or assignment.shift_label or ''
+            if role and assignment.shift_label and role not in assignee_display:
+                # keep assignee name separate
+                pass
             writer.writerow([
                 assignment.date.isoformat(),
                 _tt_value(assignment.task_type),
+                role,
                 assignee_display,
                 week_start_str
             ])
@@ -143,39 +142,51 @@ def export_to_xlsx(schedule: Schedule, file_path: str):
     ws = wb.active
     ws.title = "Schedule"
 
-    # Columns: Date, ATM Morning, ATM Mid/Night, SysAid Maker, SysAid Checker
-    headers = [
-        "Date",
-        "ATM Morning (07:30-08:30)",
-        "ATM Mid/Night",
-        "SysAid Maker",
-        "SysAid Checker"
-    ]
-    ws.append(headers)
-
-    # Group by date
+    # If schedule contains only default task types, keep calendar columns; otherwise export vertical rows (Date, Task, Role, Assignee)
     def _tt_value(t):
         return t if isinstance(t, str) else t.value
 
-    by_date = {}
-    for a in schedule.assignments:
-        d = a.date
-        by_date.setdefault(d, []).append(a)
+    task_types = { _tt_value(a.task_type) for a in schedule.assignments }
+    default_tasks = {TaskType.ATM_MORNING.value, TaskType.ATM_MIDNIGHT.value, TaskType.SYSAID_MAKER.value, TaskType.SYSAID_CHECKER.value}
 
-    for day in sorted(by_date.keys()):
-        row = [day.isoformat(), "", "", "", ""]
-        aggregates: dict[str, list] = {}
-        for a in by_date[day]:
-            display = a.assignee.name
-            if a.shift_label:
-                display = f"{display} ({a.shift_label})"
-            aggregates.setdefault(_tt_value(a.task_type), []).append(display)
+    if task_types and task_types.issubset(default_tasks):
+        headers = [
+            "Date",
+            "ATM Morning (07:30-08:30)",
+            "ATM Mid/Night",
+            "SysAid Maker",
+            "SysAid Checker"
+        ]
+        ws.append(headers)
 
-        row[1] = "\n".join(aggregates.get(TaskType.ATM_MORNING.value, []))
-        row[2] = "\n".join(aggregates.get(TaskType.ATM_MIDNIGHT.value, []))
-        row[3] = "\n".join(aggregates.get(TaskType.SYSAID_MAKER.value, []))
-        row[4] = "\n".join(aggregates.get(TaskType.SYSAID_CHECKER.value, []))
-        ws.append(row)
+        by_date = {}
+        for a in schedule.assignments:
+            d = a.date
+            by_date.setdefault(d, []).append(a)
+
+        for day in sorted(by_date.keys()):
+            row = [day.isoformat(), "", "", "", ""]
+            aggregates: dict[str, list] = {}
+            for a in by_date[day]:
+                display = a.assignee.name
+                if a.shift_label:
+                    display = f"{display} ({a.shift_label})"
+                aggregates.setdefault(_tt_value(a.task_type), []).append(display)
+
+            row[1] = "\n".join(aggregates.get(TaskType.ATM_MORNING.value, []))
+            row[2] = "\n".join(aggregates.get(TaskType.ATM_MIDNIGHT.value, []))
+            row[3] = "\n".join(aggregates.get(TaskType.SYSAID_MAKER.value, []))
+            row[4] = "\n".join(aggregates.get(TaskType.SYSAID_CHECKER.value, []))
+            ws.append(row)
+    else:
+        # Vertical layout for dynamic/custom tasks
+        headers = ["Date", "Task", "Role", "Assignee", "Week Start"]
+        ws.append(headers)
+        for a in sorted(schedule.assignments, key=lambda x: (x.date, _tt_value(x.task_type))):
+            role = a.custom_task_shift or a.shift_label or ''
+            week = a.week_start.isoformat() if a.week_start else ''
+            assignee = a.assignee.name
+            ws.append([a.date.isoformat(), _tt_value(a.task_type), role, assignee, week])
 
     # Autosize columns
     for col_idx in range(1, len(headers) + 1):
@@ -224,23 +235,35 @@ def export_to_pdf(schedule: Schedule, file_path: str):
         d = a.date
         by_date.setdefault(d, []).append(a)
     
-    # Table data
-    data = [['Date', 'ATM Morning', 'ATM Mid/Night', 'SysAid Maker', 'SysAid Checker']]
-    
-    for day in sorted(by_date.keys()):
-        row = [day.strftime('%Y-%m-%d (%A)'), '', '', '', '']
-        aggregates: dict[str, list] = {}
-        for a in by_date[day]:
-            display = a.assignee.name
-            if a.shift_label:
-                display = f"{display} ({a.shift_label})"
-            aggregates.setdefault(_tt_value(a.task_type), []).append(display)
-        
-        row[1] = '\n'.join(aggregates.get(TaskType.ATM_MORNING.value, [])) or '-'
-        row[2] = '\n'.join(aggregates.get(TaskType.ATM_MIDNIGHT.value, [])) or '-'
-        row[3] = '\n'.join(aggregates.get(TaskType.SYSAID_MAKER.value, [])) or '-'
-        row[4] = '\n'.join(aggregates.get(TaskType.SYSAID_CHECKER.value, [])) or '-'
-        data.append(row)
+    # Table data: adapt layout for default or dynamic tasks
+    task_types = { _tt_value(a.task_type) for a in schedule.assignments }
+    default_tasks = {TaskType.ATM_MORNING.value, TaskType.ATM_MIDNIGHT.value, TaskType.SYSAID_MAKER.value, TaskType.SYSAID_CHECKER.value}
+
+    if task_types and task_types.issubset(default_tasks):
+        data = [['Date', 'ATM Morning', 'ATM Mid/Night', 'SysAid Maker', 'SysAid Checker']]
+        for day in sorted(by_date.keys()):
+            row = [day.strftime('%Y-%m-%d (%A)'), '', '', '', '']
+            aggregates: dict[str, list] = {}
+            for a in by_date[day]:
+                display = a.assignee.name
+                if a.shift_label:
+                    display = f"{display} ({a.shift_label})"
+                aggregates.setdefault(_tt_value(a.task_type), []).append(display)
+
+            row[1] = '\n'.join(aggregates.get(TaskType.ATM_MORNING.value, [])) or '-'
+            row[2] = '\n'.join(aggregates.get(TaskType.ATM_MIDNIGHT.value, [])) or '-'
+            row[3] = '\n'.join(aggregates.get(TaskType.SYSAID_MAKER.value, [])) or '-'
+            row[4] = '\n'.join(aggregates.get(TaskType.SYSAID_CHECKER.value, [])) or '-'
+            data.append(row)
+    else:
+        # Vertical rows for dynamic/custom tasks
+        data = [['Date', 'Task', 'Role', 'Assignee', 'Week Start']]
+        for day in sorted(by_date.keys()):
+            for a in by_date[day]:
+                display = a.assignee.name
+                role = a.custom_task_shift or a.shift_label or ''
+                week = a.week_start.strftime('%Y-%m-%d') if a.week_start else ''
+                data.append([day.strftime('%Y-%m-%d (%A)'), _tt_value(a.task_type), role or '-', display, week])
     
     # Create table
     table = Table(data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])

@@ -856,13 +856,25 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
 
     # Decrement fairness counts for these assignments if rows exist
     for a in assignments:
-        fc = session.query(FairnessCount).filter(
-            FairnessCount.member_id == a.member_id,
-            FairnessCount.task_type == a.task_type
-        ).first()
-        if fc and fc.count and fc.count > 0:
-            fc.count -= 1
-            fc.updated_at = date.today()
+        # If this was a dynamic/custom task, decrement DynamicFairnessCount
+        from .database import DynamicFairnessCount
+        if a.custom_task_name or (isinstance(a.task_type, str) and a.task_type not in {t.value for t in TaskType}):
+            tname = a.custom_task_name or a.task_type
+            dfc = session.query(DynamicFairnessCount).filter(
+                DynamicFairnessCount.member_id == a.member_id,
+                DynamicFairnessCount.task_name == tname
+            ).first()
+            if dfc and dfc.count and dfc.count > 0:
+                dfc.count -= 1
+                dfc.updated_at = date.today()
+        else:
+            fc = session.query(FairnessCount).filter(
+                FairnessCount.member_id == a.member_id,
+                FairnessCount.task_type == a.task_type
+            ).first()
+            if fc and fc.count and fc.count > 0:
+                fc.count -= 1
+                fc.updated_at = date.today()
 
     # Delete assignments
     if assignment_ids:
@@ -999,6 +1011,11 @@ async def get_fairness_counts(session: Session = Depends(get_db)):
     # Get assignments from last 90 days
     from datetime import timedelta
     cutoff_date = date.today() - timedelta(days=90)
+
+    # Discover dynamic/custom task types present in recent assignments
+    recent_task_types = set(r[0] for r in session.query(AssignmentDB.task_type).filter(AssignmentDB.assignment_date >= cutoff_date).distinct().all())
+    # Filter out enum task types (keep their string values)
+    dynamic_task_types = [t for t in recent_task_types if t not in {tt.value for tt in TaskType}]
     
     for member in members:
         counts = {}
@@ -1011,6 +1028,16 @@ async def get_fairness_counts(session: Session = Depends(get_db)):
                 AssignmentDB.assignment_date >= cutoff_date
             ).count()
             counts[task_type.value] = assignment_count
+            total += assignment_count
+
+        # Include dynamic/custom task types discovered from recent assignments
+        for dt in dynamic_task_types:
+            assignment_count = session.query(AssignmentDB).filter(
+                AssignmentDB.member_id == member.id,
+                AssignmentDB.task_type == dt,
+                AssignmentDB.assignment_date >= cutoff_date
+            ).count()
+            counts[dt] = assignment_count
             total += assignment_count
         
         result.append({
@@ -1032,6 +1059,10 @@ async def export_fairness_pdf(session: Session = Depends(get_db), user: User = D
     from datetime import timedelta
     cutoff_date = date.today() - timedelta(days=90)
     
+    # Discover dynamic task types in recent assignments
+    recent_task_types = set(r[0] for r in session.query(AssignmentDB.task_type).filter(AssignmentDB.assignment_date >= cutoff_date).distinct().all())
+    dynamic_task_types = [t for t in recent_task_types if t not in {tt.value for tt in TaskType}]
+
     for member in members:
         counts = {}
         total = 0
@@ -1043,6 +1074,15 @@ async def export_fairness_pdf(session: Session = Depends(get_db), user: User = D
                 AssignmentDB.assignment_date >= cutoff_date
             ).count()
             counts[task_type.value] = assignment_count
+            total += assignment_count
+        # dynamic tasks
+        for dt in dynamic_task_types:
+            assignment_count = session.query(AssignmentDB).filter(
+                AssignmentDB.member_id == member.id,
+                AssignmentDB.task_type == dt,
+                AssignmentDB.assignment_date >= cutoff_date
+            ).count()
+            counts[dt] = assignment_count
             total += assignment_count
         
         fairness_data.append({

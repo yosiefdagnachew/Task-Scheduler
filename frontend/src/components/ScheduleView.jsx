@@ -224,8 +224,18 @@ function ScheduleView() {
                   {Object.entries(roles).map(([role, members]) => (
                     <div key={role}>
                       <div className="text-xs text-gray-500">{role}</div>
-                      <div className="text-sm font-medium text-gray-900">
-                        {Array.from(members.values()).join(', ')}
+                      <div className="text-sm font-medium text-gray-900 space-y-1">
+                        {Array.from(members.entries()).map(([mid, mname]) => (
+                          <div key={mid} className="flex items-center space-x-2">
+                            <div className="text-sm">{mname}</div>
+                            {isAdmin && (
+                              <select className="text-xs border px-1 py-0.5 rounded" defaultValue="" onChange={(e)=>{ if (e.target.value) { reassign(Number(e.target.dataset.assignmentId), e.target.value); e.target.value=''; } }} data-assignment-id={Array.from(items).find(it=>it.member_id===mid)?.id}>
+                                <option value="">Change</option>
+                                {team.map(t => (<option key={t.id} value={t.id}>{t.name}</option>))}
+                              </select>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
@@ -251,7 +261,17 @@ function ScheduleView() {
               <div key={dateStr} className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b last:border-b-0 pb-2">
               <div className="text-sm text-gray-500">{safeFormat(dateStr, 'EEE, MMM dd')}</div>
               <div className="text-sm font-medium text-gray-900">
-                {entries.map(entry => `${entry.member_name}${entry.custom_task_shift ? ` (${entry.custom_task_shift})` : ''}`).join(', ')}
+                {entries.map(entry => (
+                  <div key={entry.id} className="flex items-center space-x-2">
+                    <div>{entry.member_name}{entry.custom_task_shift ? ` (${entry.custom_task_shift})` : ''}</div>
+                    {isAdmin && (
+                      <select className="text-xs border px-1 py-0.5 rounded" value="" onChange={(e)=>{ if (e.target.value) { reassign(entry.id, e.target.value); e.target.value=''; } }}>
+                        <option value="">Change</option>
+                        {team.map(m => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                      </select>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           ))}
@@ -396,14 +416,13 @@ function ScheduleView() {
       {renderDynamicAssignmentsSection(taskFilter === 'default' ? null : taskFilter)}
 
       {/* Assignment Summary & Fairness */}
-      {(!isDynamicOnly && hasDefaultAssignments) && (
-        <div className="mt-6 bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Assignment Summary</h3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {getDefaultColumns().map(column => {
-            const taskAssignments = schedule.assignments.filter(a => {
-                return a.task_type === column.key;
-              });
+      <div className="mt-6 bg-white shadow rounded-lg p-6">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Assignment Summary</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* If default schedule, show default columns; otherwise show per-task summary */}
+          { (schedule.assignments.some(a => DEFAULT_TASK_TYPES.has(a.task_type))) ? (
+            getDefaultColumns().map(column => {
+              const taskAssignments = schedule.assignments.filter(a => a.task_type === column.key);
               const uniqueMembers = new Set(taskAssignments.map(a => a.member_name));
               return (
                 <div key={column.key} className="border rounded-lg p-4">
@@ -414,17 +433,27 @@ function ScheduleView() {
                   <div className="text-sm text-gray-500">unique members</div>
                 </div>
               );
-            })}
-          </div>
+            })
+          ) : (
+            // Dynamic/custom tasks: group by task name
+            Object.entries(dynamicAssignmentsByTask).map(([taskName, items]) => {
+              const uniqueMembers = new Set(items.map(i => i.member_name));
+              return (
+                <div key={taskName} className="border rounded-lg p-4">
+                  <div className="inline-block px-2 py-1 text-xs font-medium rounded mb-2 bg-gray-100 text-gray-800">{taskName}</div>
+                  <div className="text-2xl font-bold text-gray-900">{uniqueMembers.size}</div>
+                  <div className="text-sm text-gray-500">unique members</div>
+                </div>
+              );
+            })
+          )}
         </div>
-      )}
+      </div>
 
-      {!isDynamicOnly && (
-        <div className="mt-6 bg-white shadow rounded-lg p-6">
-          <h4 className="font-medium mb-2">Fairness Score (variance and spread)</h4>
-          <FairnessDetails assignments={schedule.assignments} />
-        </div>
-      )}
+      <div className="mt-6 bg-white shadow rounded-lg p-6">
+        <h4 className="font-medium mb-2">Fairness Score (variance and spread)</h4>
+        <FairnessDetails assignments={schedule.assignments} />
+      </div>
     </div>
   );
 }
