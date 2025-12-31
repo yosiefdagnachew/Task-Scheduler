@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart3, RefreshCw, Download } from 'lucide-react';
-import { getFairnessCounts, recalcFairness } from '../services/api';
+import { getFairnessTable, recalcFairness } from '../services/api';
 import api from '../services/api';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function FairnessView() {
-  const [fairness, setFairness] = useState([]);
+  const [columns, setColumns] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     loadFairness();
@@ -15,8 +18,10 @@ export default function FairnessView() {
   const loadFairness = async () => {
     try {
       setRefreshing(true);
-      const response = await getFairnessCounts();
-      setFairness(response.data);
+      const response = await getFairnessTable({ statuses: 'draft,published' });
+      const data = response.data || {};
+      setColumns(Array.isArray(data.columns) ? data.columns : []);
+      setRows(Array.isArray(data.rows) ? data.rows : []);
     } catch (error) {
       console.error('Error loading fairness data:', error);
       alert('Failed to load fairness data');
@@ -28,7 +33,7 @@ export default function FairnessView() {
 
   const handleExportPDF = async () => {
     try {
-      const response = await api.get('/fairness/export/pdf', { responseType: 'blob' });
+      const response = await api.get('/fairness/export/pdf', { responseType: 'blob', params: { statuses: 'draft,published' } });
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -49,12 +54,12 @@ export default function FairnessView() {
       setRefreshing(true);
       await recalcFairness();
       await loadFairness();
-      alert('Fairness recalculated successfully');
     } catch (error) {
       console.error('Error recalculating fairness:', error);
       alert('Failed to recalculate fairness');
     } finally {
       setRefreshing(false);
+      setConfirmOpen(false);
     }
   };
 
@@ -62,9 +67,10 @@ export default function FairnessView() {
     return <div className="text-center py-12">Loading...</div>;
   }
 
-  const maxCount = Math.max(...fairness.map(f => f.total), 1);
+  const maxCount = Math.max(...rows.map(f => f.total), 1);
 
   return (
+    <>
     <div className="px-4 py-6">
       <div className="mb-6 flex justify-between items-center">
         <div>
@@ -90,7 +96,7 @@ export default function FairnessView() {
             Export PDF
           </button>
             <button
-              onClick={handleRecalculate}
+              onClick={() => setConfirmOpen(true)}
               disabled={refreshing}
               className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-all duration-200 hover:scale-105"
             >
@@ -102,85 +108,27 @@ export default function FairnessView() {
 
       <div className="bg-white shadow rounded-lg p-6">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200 table-fixed">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Member
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ATM Morning
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ATM Mid/Night
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  SysAid Maker
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  SysAid Checker
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Balance
-                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
+                {columns.map((c) => (
+                  <th key={c} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-pre-wrap break-words" title={c}>
+                    {c.replaceAll('_',' ')}
+                  </th>
+                ))}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {fairness.map((member) => (
+              {rows.map((member) => (
                 <tr key={member.member_id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {member.member_name}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <div className="flex items-center justify-center">
-                      <span className="text-sm text-gray-900 mr-2">{member.counts.ATM_MORNING || 0}</span>
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-blue-600 h-2 rounded-full"
-                          style={{ width: `${((member.counts.ATM_MORNING || 0) / maxCount) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <div className="flex items-center justify-center">
-                      <span className="text-sm text-gray-900 mr-2">{member.counts.ATM_MIDNIGHT || 0}</span>
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-purple-600 h-2 rounded-full"
-                          style={{ width: `${((member.counts.ATM_MIDNIGHT || 0) / maxCount) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <div className="flex items-center justify-center">
-                      <span className="text-sm text-gray-900 mr-2">{member.counts.SYSAID_MAKER || 0}</span>
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-green-600 h-2 rounded-full"
-                          style={{ width: `${((member.counts.SYSAID_MAKER || 0) / maxCount) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <div className="flex items-center justify-center">
-                      <span className="text-sm text-gray-900 mr-2">{member.counts.SYSAID_CHECKER || 0}</span>
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-yellow-600 h-2 rounded-full"
-                          style={{ width: `${((member.counts.SYSAID_CHECKER || 0) / maxCount) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium text-gray-900">
-                    {member.total}
-                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{member.member_name}</td>
+                  {columns.map((c) => (
+                    <td key={c} className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">{member.counts?.[c] ?? 0}</td>
+                  ))}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{member.total}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="w-32 bg-gray-200 rounded-full h-2">
                       <div
@@ -213,6 +161,14 @@ export default function FairnessView() {
         </ul>
       </div>
     </div>
+    <ConfirmDialog
+      open={confirmOpen}
+      title="Recalculate Fairness?"
+      message="This will rebuild fairness counters within the configured window. Continue?"
+      onCancel={() => setConfirmOpen(false)}
+      onConfirm={handleRecalculate}
+    />
+    </>
   );
 }
 

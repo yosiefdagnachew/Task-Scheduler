@@ -66,6 +66,7 @@ export const deleteSchedule = (scheduleId) => api.delete(`/schedules/${scheduleI
 
 // Fairness
 export const getFairnessCounts = () => api.get('/fairness');
+export const getFairnessTable = (params = {}) => api.get('/fairness/table', { params });
 export const recalcFairness = () => api.post('/fairness/recalculate');
 
 // Configuration

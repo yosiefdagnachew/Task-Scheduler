@@ -864,17 +864,25 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
                 DynamicFairnessCount.member_id == a.member_id,
                 DynamicFairnessCount.task_name == tname
             ).first()
-            if dfc and dfc.count and dfc.count > 0:
-                dfc.count -= 1
-                dfc.updated_at = date.today()
+            if dfc:
+                if dfc.count and dfc.count > 0:
+                    dfc.count -= 1
+                    dfc.updated_at = date.today()
+                # Clean up zeroed counters
+                if not dfc.count or dfc.count <= 0:
+                    session.delete(dfc)
         else:
             fc = session.query(FairnessCount).filter(
                 FairnessCount.member_id == a.member_id,
                 FairnessCount.task_type == a.task_type
             ).first()
-            if fc and fc.count and fc.count > 0:
-                fc.count -= 1
-                fc.updated_at = date.today()
+            if fc:
+                if fc.count and fc.count > 0:
+                    fc.count -= 1
+                    fc.updated_at = date.today()
+                # Clean up zeroed counters
+                if not fc.count or fc.count <= 0:
+                    session.delete(fc)
 
     # Delete assignments
     if assignment_ids:
@@ -898,17 +906,23 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
                     DynamicFairnessCount.member_id == a.member_id,
                     DynamicFairnessCount.task_name == tname
                 ).first()
-                if dfc and dfc.count and dfc.count > 0:
-                    dfc.count -= 1
-                    dfc.updated_at = date.today()
+                if dfc:
+                    if dfc.count and dfc.count > 0:
+                        dfc.count -= 1
+                        dfc.updated_at = date.today()
+                    if not dfc.count or dfc.count <= 0:
+                        session.delete(dfc)
             else:
                 fc = session.query(FairnessCount).filter(
                     FairnessCount.member_id == a.member_id,
                     FairnessCount.task_type == a.task_type
                 ).first()
-                if fc and fc.count and fc.count > 0:
-                    fc.count -= 1
-                    fc.updated_at = date.today()
+                if fc:
+                    if fc.count and fc.count > 0:
+                        fc.count -= 1
+                        fc.updated_at = date.today()
+                    if not fc.count or fc.count <= 0:
+                        session.delete(fc)
         session.query(AssignmentDB).filter(AssignmentDB.id.in_(orphan_ids)).delete(synchronize_session=False)
 
     # Delete schedule
@@ -918,7 +932,7 @@ async def delete_schedule(schedule_id: int, session: Session = Depends(get_db), 
 
 
 @app.post("/api/fairness/recalculate")
-async def recalculate_fairness(session: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def recalculate_fairness(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Recalculate fairness counters from assignments within the configured rolling window."""
     try:
         try:
@@ -930,48 +944,56 @@ async def recalculate_fairness(session: Session = Depends(get_db), admin: User =
         from datetime import timedelta
         cutoff = date.today() - timedelta(days=window_days)
 
-        # Rebuild counts transactionally
-        with session.begin():
-            # Clear existing counters
-            session.query(FairnessCount).delete(synchronize_session=False)
-            session.query(DynamicFairnessCount).delete(synchronize_session=False)
+        # Ensure we are not nested inside an existing transaction
+        if session.in_transaction():
+            session.rollback()
 
-            # Query relevant assignments
-            rows = session.query(AssignmentDB.member_id, AssignmentDB.task_type, AssignmentDB.custom_task_name).filter(
-                AssignmentDB.assignment_date >= cutoff
-            ).all()
+        # Clear existing counters
+        session.query(FairnessCount).delete(synchronize_session=False)
+        session.query(DynamicFairnessCount).delete(synchronize_session=False)
 
-            enum_task_values = {t.value for t in TaskType}
+        # Query relevant assignments
+        rows = session.query(AssignmentDB.member_id, AssignmentDB.task_type, AssignmentDB.custom_task_name).filter(
+            AssignmentDB.assignment_date >= cutoff
+        ).all()
 
-            for member_id, task_type, custom_name in rows:
-                if custom_name or (isinstance(task_type, str) and task_type not in enum_task_values):
-                    tname = custom_name or task_type or 'CUSTOM'
-                    dfc = session.query(DynamicFairnessCount).filter(
-                        DynamicFairnessCount.member_id == member_id,
-                        DynamicFairnessCount.task_name == tname
-                    ).first()
-                    if not dfc:
-                        dfc = DynamicFairnessCount(member_id=member_id, task_name=tname, count=0, updated_at=date.today())
-                        session.add(dfc)
-                    dfc.count = (dfc.count or 0) + 1
-                    dfc.updated_at = date.today()
-                else:
-                    task_str = task_type
-                    fc = session.query(FairnessCount).filter(
-                        FairnessCount.member_id == member_id,
-                        FairnessCount.task_type == task_str
-                    ).first()
-                    if not fc:
-                        fc = FairnessCount(member_id=member_id, task_type=task_str, count=0, period_start=date.today()-timedelta(days=window_days), period_end=date.today())
-                        session.add(fc)
-                    fc.count = (fc.count or 0) + 1
-                    fc.updated_at = date.today()
+        enum_task_values = {t.value for t in TaskType}
+
+        for member_id, task_type, custom_name in rows:
+            if custom_name or (isinstance(task_type, str) and task_type not in enum_task_values):
+                tname = custom_name or task_type or 'CUSTOM'
+                dfc = session.query(DynamicFairnessCount).filter(
+                    DynamicFairnessCount.member_id == member_id,
+                    DynamicFairnessCount.task_name == tname
+                ).first()
+                if not dfc:
+                    dfc = DynamicFairnessCount(member_id=member_id, task_name=tname, count=0, updated_at=date.today())
+                    session.add(dfc)
+                dfc.count = (dfc.count or 0) + 1
+                dfc.updated_at = date.today()
+            else:
+                task_str = task_type
+                fc = session.query(FairnessCount).filter(
+                    FairnessCount.member_id == member_id,
+                    FairnessCount.task_type == task_str
+                ).first()
+                if not fc:
+                    fc = FairnessCount(member_id=member_id, task_type=task_str, count=0, period_start=date.today()-timedelta(days=window_days), period_end=date.today())
+                    session.add(fc)
+                fc.count = (fc.count or 0) + 1
+                fc.updated_at = date.today()
+
+        session.commit()
 
         return {"message": "Fairness recalculated", "window_days": window_days}
     except Exception as e:
         import traceback
         print(f"Failed to recalculate fairness: {e}")
         traceback.print_exc()
+        try:
+            session.rollback()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/schedules/{schedule_id}")
@@ -1090,98 +1112,175 @@ async def export_schedule_xlsx(schedule_id: int, session: Session = Depends(get_
 
 # Fairness
 @app.get("/api/fairness")
-async def get_fairness_counts(session: Session = Depends(get_db)):
-    """Get fairness counts for all members."""
+async def get_fairness_counts(
+    session: Session = Depends(get_db),
+    schedule_id: Optional[int] = None,
+    statuses: Optional[str] = "draft,published",
+    include_columns: bool = False,
+):
+    """Get fairness counts for all members based on live schedules.
+
+    - If schedule_id is provided, restrict to that schedule's assignments.
+    - Otherwise, include assignments that belong to existing schedules filtered by `statuses` (comma-separated).
+    - Orphaned assignments (no schedule) are excluded to avoid stale values after deletions.
+    """
     members = session.query(TeamMemberDB).all()
     result = []
-    
-    # Get assignments from last 90 days
-    from datetime import timedelta
-    cutoff_date = date.today() - timedelta(days=90)
 
-    # Discover dynamic/custom task types present in recent assignments
-    recent_task_types = set(r[0] for r in session.query(AssignmentDB.task_type).filter(AssignmentDB.assignment_date >= cutoff_date).distinct().all())
-    # Filter out enum task types (keep their string values)
-    dynamic_task_types = [t for t in recent_task_types if t not in {tt.value for tt in TaskType}]
-    
+    # Build base assignment query limited to live schedules
+    base_q = session.query(AssignmentDB)
+    if schedule_id is not None:
+        base_q = base_q.filter(AssignmentDB.schedule_id == schedule_id)
+    else:
+        base_q = base_q.join(ScheduleDB, AssignmentDB.schedule_id == ScheduleDB.id)
+        if statuses:
+            allowed_statuses = [s.strip() for s in statuses.split(',') if s.strip()]
+            if allowed_statuses:
+                base_q = base_q.filter(ScheduleDB.status.in_(allowed_statuses))
+
+    # Determine which task identifiers are present in the filtered assignments
+    present_types = set(
+        r[0] for r in base_q.with_entities(AssignmentDB.task_type).distinct().all()
+    )
+    enum_values = {t.value for t in TaskType}
+    enum_present = [tv for tv in enum_values if tv in present_types]
+    dynamic_task_types = [t for t in present_types if t not in enum_values]
+
     for member in members:
-        counts = {}
+        counts: Dict[str, int] = {}
         total = 0
-        for task_type in TaskType:
-            # Count assignments in the last 90 days
-            assignment_count = session.query(AssignmentDB).filter(
-                AssignmentDB.member_id == member.id,
-                AssignmentDB.task_type == task_type.value,
-                AssignmentDB.assignment_date >= cutoff_date
-            ).count()
-            counts[task_type.value] = assignment_count
-            total += assignment_count
 
-        # Include dynamic/custom task types discovered from recent assignments
+        # Built-in tasks actually present
+        for task_val in enum_present:
+            c = base_q.filter(
+                AssignmentDB.member_id == member.id,
+                AssignmentDB.task_type == task_val,
+            ).count()
+            counts[task_val] = c
+            total += c
+
+        # Dynamic/custom tasks present
         for dt in dynamic_task_types:
-            assignment_count = session.query(AssignmentDB).filter(
+            c = base_q.filter(
                 AssignmentDB.member_id == member.id,
                 AssignmentDB.task_type == dt,
-                AssignmentDB.assignment_date >= cutoff_date
             ).count()
-            counts[dt] = assignment_count
-            total += assignment_count
-        
+            counts[dt] = c
+            total += c
+
         result.append({
             "member_id": member.id,
             "member_name": member.name,
             "counts": counts,
-            "total": total
+            "total": total,
         })
-    
-    return result
+
+    if include_columns:
+        # Order columns: built-ins first (enum order), then dynamic alphabetical
+        builtin_order = [t.value for t in TaskType if t.value in enum_present]
+        dyn_order = sorted(dynamic_task_types)
+        columns = builtin_order + dyn_order
+        return {"columns": columns, "rows": result}
+    else:
+        return result
 
 @app.get("/api/fairness/export/pdf")
-async def export_fairness_pdf(session: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Export fairness tracking data to PDF."""
+async def export_fairness_pdf(
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    schedule_id: Optional[int] = None,
+    statuses: Optional[str] = "draft,published",
+):
+    """Export fairness tracking data to PDF based on live schedules (dynamic columns)."""
+    # Reuse the same logic as get_fairness_counts
+    base_q = session.query(AssignmentDB)
+    if schedule_id is not None:
+        base_q = base_q.filter(AssignmentDB.schedule_id == schedule_id)
+    else:
+        base_q = base_q.join(ScheduleDB, AssignmentDB.schedule_id == ScheduleDB.id)
+        if statuses:
+            allowed_statuses = [s.strip() for s in statuses.split(',') if s.strip()]
+            if allowed_statuses:
+                base_q = base_q.filter(ScheduleDB.status.in_(allowed_statuses))
+
+    present_types = set(r[0] for r in base_q.with_entities(AssignmentDB.task_type).distinct().all())
+    enum_values = {t.value for t in TaskType}
+    # Order: built-ins first (if present), then others alphabetically
+    builtin_order = [t.value for t in TaskType if t.value in present_types]
+    dynamic_order = sorted([t for t in present_types if t not in enum_values])
+    columns = builtin_order + dynamic_order
+
     members = session.query(TeamMemberDB).all()
     fairness_data = []
-    
-    # Get assignments from last 90 days
-    from datetime import timedelta
-    cutoff_date = date.today() - timedelta(days=90)
-    
-    # Discover dynamic task types in recent assignments
-    recent_task_types = set(r[0] for r in session.query(AssignmentDB.task_type).filter(AssignmentDB.assignment_date >= cutoff_date).distinct().all())
-    dynamic_task_types = [t for t in recent_task_types if t not in {tt.value for tt in TaskType}]
-
     for member in members:
         counts = {}
         total = 0
-        for task_type in TaskType:
-            # Count assignments in the last 90 days
-            assignment_count = session.query(AssignmentDB).filter(
+        for col in columns:
+            c = base_q.filter(
                 AssignmentDB.member_id == member.id,
-                AssignmentDB.task_type == task_type,
-                AssignmentDB.assignment_date >= cutoff_date
+                AssignmentDB.task_type == col,
             ).count()
-            counts[task_type.value] = assignment_count
-            total += assignment_count
-        # dynamic tasks
-        for dt in dynamic_task_types:
-            assignment_count = session.query(AssignmentDB).filter(
-                AssignmentDB.member_id == member.id,
-                AssignmentDB.task_type == dt,
-                AssignmentDB.assignment_date >= cutoff_date
-            ).count()
-            counts[dt] = assignment_count
-            total += assignment_count
-        
+            counts[col] = c
+            total += c
         fairness_data.append({
             "member_id": member.id,
             "member_name": member.name,
             "counts": counts,
-            "total": total
+            "total": total,
         })
-    
+
     file_path = f"out/fairness_{date.today().isoformat()}.pdf"
-    export_fairness_to_pdf(fairness_data, file_path)
+    export_fairness_to_pdf(fairness_data, file_path, columns=columns)
     return FileResponse(file_path, media_type="application/pdf", filename=f"fairness_{date.today().isoformat()}.pdf")
+
+# Convenience endpoint for frontend to always get dynamic columns + rows
+@app.get("/api/fairness/table")
+async def get_fairness_table(
+    session: Session = Depends(get_db),
+    schedule_id: Optional[int] = None,
+    statuses: Optional[str] = "draft,published",
+):
+    """Return fairness data as {columns, rows} based on live schedules, with dynamic columns.
+
+    Built-in ATM/SysAid columns are included only if present in the filtered assignments.
+    """
+    members = session.query(TeamMemberDB).all()
+    result = []
+
+    base_q = session.query(AssignmentDB)
+    if schedule_id is not None:
+        base_q = base_q.filter(AssignmentDB.schedule_id == schedule_id)
+    else:
+        base_q = base_q.join(ScheduleDB, AssignmentDB.schedule_id == ScheduleDB.id)
+        if statuses:
+            allowed_statuses = [s.strip() for s in statuses.split(',') if s.strip()]
+            if allowed_statuses:
+                base_q = base_q.filter(ScheduleDB.status.in_(allowed_statuses))
+
+    present_types = set(r[0] for r in base_q.with_entities(AssignmentDB.task_type).distinct().all())
+    enum_values = {t.value for t in TaskType}
+    builtin_order = [t.value for t in TaskType if t.value in present_types]
+    dynamic_order = sorted([t for t in present_types if t not in enum_values])
+    columns = builtin_order + dynamic_order
+
+    for member in members:
+        counts: Dict[str, int] = {}
+        total = 0
+        for col in columns:
+            c = base_q.filter(
+                AssignmentDB.member_id == member.id,
+                AssignmentDB.task_type == col,
+            ).count()
+            counts[col] = c
+            total += c
+        result.append({
+            "member_id": member.id,
+            "member_name": member.name,
+            "counts": counts,
+            "total": total,
+        })
+
+    return {"columns": columns, "rows": result}
 
 # Configuration
 @app.get("/api/config")
