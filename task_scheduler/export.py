@@ -250,9 +250,6 @@ def export_to_pdf(schedule: Schedule, file_path: str):
         spaceAfter=30,
         alignment=1  # Center
     )
-    title = Paragraph(f"Schedule: {schedule.start_date} to {schedule.end_date}", title_style)
-    elements.append(title)
-    elements.append(Spacer(1, 0.2*inch))
     
     # Group assignments by date
     def _tt_value(t):
@@ -267,6 +264,28 @@ def export_to_pdf(schedule: Schedule, file_path: str):
     task_types = { _tt_value(a.task_type) for a in schedule.assignments }
     default_tasks = {TaskType.ATM_MORNING.value, TaskType.ATM_MIDNIGHT.value, TaskType.SYSAID_MAKER.value, TaskType.SYSAID_CHECKER.value}
     is_default_layout = bool(task_types) and task_types.issubset(default_tasks)
+
+    # Build title text including schedule name if available, otherwise derive
+    def _humanize_task_label(raw: str) -> str:
+        s = str(raw or '').strip()
+        # Preserve short acronyms like EOM
+        if s and len(s) <= 5 and s.isupper():
+            return s
+        s = re.sub(r'[_\-]+', ' ', s).strip()
+        return s.title() if s else 'Schedule'
+
+    sched_name = getattr(schedule, 'title', None) or getattr(schedule, 'name', None)
+    if not sched_name:
+        if is_default_layout:
+            sched_name = "ATM/SYSAID Monitoring Schedule"
+        elif len(task_types) == 1:
+            single_type = next(iter(task_types))
+            sched_name = f"{_humanize_task_label(single_type)} Schedule"
+        else:
+            sched_name = "Schedule"
+    title = Paragraph(f"{escape(str(sched_name))}: {schedule.start_date} to {schedule.end_date}", title_style)
+    elements.append(title)
+    elements.append(Spacer(1, 0.2*inch))
 
     # Paragraph style for table cells with wrapping
     cell_style = ParagraphStyle(
